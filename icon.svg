@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round" stroke-linecap="round">
+  <polygon points="32,4 56,18 56,46 32,60 8,46 8,18"/>
+  <polygon points="32,4 46,30 18,30"/>
+  <polyline points="8,18 18,30 32,60 46,30 56,18"/>
+  <line x1="18" y1="30" x2="8" y2="46"/>
+  <line x1="46" y1="30" x2="56" y2="46"/>
+  <text x="32" y="26" font-family="system-ui, sans-serif" font-size="13" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none">20</text>
+</svg>

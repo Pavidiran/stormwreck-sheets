@@ -1,0 +1,16 @@
+{
+  "name": "Stormwreck Sheets",
+  "version": "0.1.0",
+  "manifest_version": 1,
+  "description": "Character sheets for the Dragons of Stormwreck Isle party: HP, rolls, spell slots, ki, rests and level-ups.",
+  "author": "Pavi",
+  "homepage_url": "https://github.com/Pavidiran/stormwreck-sheets",
+  "icon": "https://pavidiran.github.io/stormwreck-sheets/icon.svg",
+  "action": {
+    "title": "Stormwreck Sheets",
+    "icon": "https://pavidiran.github.io/stormwreck-sheets/icon.svg",
+    "popover": "https://pavidiran.github.io/stormwreck-sheets/index.html",
+    "width": 440,
+    "height": 760
+  }
+}
