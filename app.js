@@ -1,14 +1,14 @@
 // Stormwreck Sheets — a tiny, self-contained Owlbear Rodeo character sheet extension.
-// No build step: plain ES module. The Owlbear SDK is loaded from a CDN when running inside
-// Owlbear; outside of it (opened directly in a browser) a local mock is used so the sheet
-// can be tested standalone.
+// No build step: plain ES module. Outside Owlbear (opened directly in a browser) a local
+// mock backend is used so the sheet can be tested standalone.
 
 // The SDK must be imported statically so its message listener exists before Owlbear
 // sends the ready handshake to this iframe. A lazy import can miss that message.
 import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
-const VERSION = "0.1.1";
+const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
+const VERSION = "0.2.0";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -59,6 +59,8 @@ function obrBackend(OBR) {
     onMeta: (cb) => OBR.room.onMetadataChange(cb),
     send: (msg) => OBR.broadcast.sendMessage(CH, msg, { destination: "ALL" }),
     onMsg: (cb) => OBR.broadcast.onMessage(CH, (ev) => cb(ev.data)),
+    on: (ch, cb) => OBR.broadcast.onMessage(ch, (ev) => cb(ev.data)),
+    emit: (ch, data, destination = "LOCAL") => OBR.broadcast.sendMessage(ch, data, { destination }),
     notify: (text, variant = "DEFAULT") => OBR.notification.show(text, variant),
     theme: async () => (await OBR.theme.getTheme()).mode,
     onTheme: (cb) => OBR.theme.onChange((t) => cb(t.mode)),
@@ -95,6 +97,8 @@ function mockBackend() {
     onMeta: (cb) => metaCbs.push(cb),
     async send(m) { msgCbs.forEach((cb) => cb(m)); if (bc) bc.postMessage({ t: "msg", m }); },
     onMsg: (cb) => msgCbs.push(cb),
+    on() {},
+    async emit() {},
     async notify(text) { toast(text); },
     theme: async () => (q.get("theme") || "DARK").toUpperCase(),
     onTheme() {},
@@ -103,52 +107,105 @@ function mockBackend() {
 }
 
 // ---------------------------------------------------------------------------
-// Dice
+// Dice: internal roller, plus Dice+ (3D dice extension) when it is in the room.
+// Notation we generate: "1d20+5", "2d20kh1-1", "2d6+1", "3d4+3".
 // ---------------------------------------------------------------------------
-function rng(n) { const a = new Uint32Array(1); crypto.getRandomValues(a); return 1 + (a[0] % n); }
+const DICE = { want: true, ready: false, pending: new Map(), pingTimer: null };
+try { DICE.want = JSON.parse(localStorage.getItem("stormwreck-dice3d") ?? "true"); } catch {}
 
-function parseTerms(formula) {
+function rng(n) { const a = new Uint32Array(1); crypto.getRandomValues(a); return 1 + (a[0] % n); }
+function uid() { return Math.random().toString(36).slice(2, 10) + Date.now().toString(36); }
+
+function parseNotation(formula) {
   const s = String(formula).replace(/\s+/g, "");
-  const re = /([+-]?)(\d*d\d+|\d+)/gi;
+  const re = /([+-]?)(\d*d\d+(?:k[hl]1)?|\d+)/gi;
   const terms = []; let m;
   while ((m = re.exec(s))) {
     const sign = m[1] === "-" ? -1 : 1;
     const t = m[2].toLowerCase();
-    if (t.includes("d")) { const [c, d] = t.split("d"); terms.push({ sign, count: c === "" ? 1 : +c, sides: +d }); }
-    else terms.push({ sign, konst: +t });
+    if (t.includes("d")) {
+      const keep = t.endsWith("kh1") ? "h" : t.endsWith("kl1") ? "l" : null;
+      const [c, d] = t.replace(/k[hl]1$/, "").split("d");
+      terms.push({ sign, count: c === "" ? 1 : +c, sides: +d, keep });
+    } else terms.push({ sign, konst: +t });
   }
   return terms;
 }
 
-function rollFormula(formula, { double = false } = {}) {
-  const terms = parseTerms(formula);
-  let total = 0; const parts = [];
+function rollInternal(formula) {
+  const terms = parseNotation(formula);
+  let total = 0, d20 = null; const parts = [];
   for (const t of terms) {
     if (t.sides) {
-      const n = t.count * (double ? 2 : 1);
-      const rolls = []; for (let i = 0; i < n; i++) rolls.push(rng(t.sides));
-      const sum = rolls.reduce((a, b) => a + b, 0);
+      const rolls = []; for (let i = 0; i < t.count; i++) rolls.push(rng(t.sides));
+      let kept = rolls, dropped = [];
+      if (t.keep) { const pick = t.keep === "h" ? Math.max(...rolls) : Math.min(...rolls); const i = rolls.indexOf(pick); kept = [pick]; dropped = rolls.filter((_, j) => j !== i); }
+      const sum = kept.reduce((a, b) => a + b, 0);
       total += t.sign * sum;
-      parts.push(`${t.sign < 0 ? "-" : (parts.length ? "+" : "")}${n}d${t.sides}[${rolls.join(",")}]`);
+      if (t.sides === 20 && d20 === null) d20 = kept[0];
+      parts.push(`${t.sign < 0 ? "-" : parts.length ? "+" : ""}${t.count}d${t.sides}${t.keep ? (t.keep === "h" ? " adv" : " dis") : ""}[${kept.join(",")}${dropped.length ? "|" + dropped.join(",") : ""}]`);
     } else if (t.konst) {
       total += t.sign * t.konst;
       parts.push(`${t.sign < 0 ? "-" : "+"}${t.konst}`);
     }
   }
-  return { total, text: parts.join(" ") };
+  return { total, text: parts.join(" "), d20, via: "internal" };
 }
 
-function rollD20(bonus, mode = 0, critAt = 20) {
-  const a = rng(20), b = rng(20);
-  let kept = a, other = null;
-  if (mode === 1) { kept = Math.max(a, b); other = Math.min(a, b); }
-  else if (mode === -1) { kept = Math.min(a, b); other = Math.max(a, b); }
-  const total = kept + bonus;
-  const modeTxt = mode === 1 ? " adv" : mode === -1 ? " dis" : "";
-  const text = `d20[${kept}${other !== null ? `|${other}` : ""}]${modeTxt} ${bonus >= 0 ? "+" : "-"} ${Math.abs(bonus)}`;
-  return { total, d20: kept, crit: kept >= critAt, fumble: kept === 1, text };
+function fromDicePlus(res) {
+  let d20 = null;
+  for (const g of res.groups || []) {
+    if (String(g.diceType).toLowerCase() === "d20" && d20 === null) {
+      const kept = (g.dice || []).filter((x) => x.kept !== false);
+      if (kept.length) d20 = kept[0].value;
+    }
+  }
+  return { total: res.totalValue, text: res.rollSummary || res.diceNotation || "", d20, via: "dice+" };
 }
 
+function dicePlusRoll(notation, label) {
+  return new Promise((resolve, reject) => {
+    const rollId = uid();
+    const timer = setTimeout(() => { DICE.pending.delete(rollId); reject(new Error("Dice+ did not answer")); }, 30000);
+    DICE.pending.set(rollId, { resolve, reject, timer });
+    B.emit("dice-plus/roll-request", {
+      rollId, playerId: ME.id, playerName: ME.name, rollTarget: "everyone",
+      diceNotation: label ? `${notation} # ${label}` : notation,
+      showResults: true, timestamp: Date.now(), source: SOURCE,
+    }, "LOCAL").catch((e) => { clearTimeout(timer); DICE.pending.delete(rollId); reject(e); });
+  });
+}
+
+function setupDicePlus() {
+  if (B.kind !== "obr") return;
+  B.on(`${SOURCE}/roll-result`, (m) => {
+    const p = m && DICE.pending.get(m.rollId); if (!p) return;
+    clearTimeout(p.timer); DICE.pending.delete(m.rollId); p.resolve(fromDicePlus(m.result || {}));
+  });
+  B.on(`${SOURCE}/roll-error`, (m) => {
+    const p = m && DICE.pending.get(m.rollId); if (!p) return;
+    clearTimeout(p.timer); DICE.pending.delete(m.rollId); p.reject(new Error(m.error || "Dice+ error"));
+  });
+  B.on("dice-plus/isReady", (m) => {
+    if (m && m.ready && !DICE.ready) { DICE.ready = true; clearInterval(DICE.pingTimer); render(); }
+  });
+  const ping = () => B.emit("dice-plus/isReady", { requestId: uid(), timestamp: Date.now() }, "LOCAL").catch(() => {});
+  ping();
+  DICE.pingTimer = setInterval(() => { if (DICE.ready) clearInterval(DICE.pingTimer); else ping(); }, 15000);
+}
+
+const useDicePlus = () => DICE.want && DICE.ready && B.kind === "obr";
+
+async function rollNotation(notation, label) {
+  if (useDicePlus()) {
+    try { return await dicePlusRoll(notation, label); }
+    catch (e) { console.warn(e); const r = rollInternal(notation); r.text += " (Dice+ failed, rolled here)"; return r; }
+  }
+  return rollInternal(notation);
+}
+
+const d20Notation = (bonus, mode) => (mode === 1 ? "2d20kh1" : mode === -1 ? "2d20kl1" : "1d20") + (bonus >= 0 ? `+${bonus}` : `${bonus}`);
+const doubled = (formula) => String(formula).replace(/(\d*)d(\d+)/gi, (m, c, s) => `${(c === "" ? 1 : +c) * 2}d${s}`);
 const sgn = (n) => (n >= 0 ? `+${n}` : `${n}`);
 const mod = (score) => Math.floor((score - 10) / 2);
 
@@ -157,12 +214,12 @@ const mod = (score) => Math.floor((score - 10) / 2);
 // ---------------------------------------------------------------------------
 let DATA, SPELLS, B, ME = { id: "", name: "", role: "PLAYER" }, META = {};
 const UI = {
-  charId: null, adv: 0, log: [], open: {}, levelup: null, rest: null, rolling: null,
-  popups: true, lastAttack: {}, prepOpen: false, editAc: false, menu: false, dirty: false,
+  charId: null, adv: 0, log: [], open: {}, levelup: null, rest: null, busy: false,
+  popups: true, lastAttack: {}, lastSpell: {}, prepOpen: false, editAc: false, menu: false, dirty: false,
   acctClaimsOpen: false,
 };
 try { Object.assign(UI, JSON.parse(localStorage.getItem("stormwreck-ui") || "{}")); } catch {}
-UI.levelup = null; UI.rest = null; UI.menu = false; UI.editAc = false; UI.prepOpen = false;
+UI.levelup = null; UI.rest = null; UI.menu = false; UI.editAc = false; UI.prepOpen = false; UI.busy = false;
 function saveUi() {
   try { localStorage.setItem("stormwreck-ui", JSON.stringify({ open: UI.open, popups: UI.popups, charId: UI.charId, adv: 0 })); } catch {}
 }
@@ -256,18 +313,26 @@ function post(c, entry) {
 }
 function addLog(msg) {
   UI.log.unshift(msg); if (UI.log.length > 40) UI.log.length = 40;
-  if (UI.popups && msg.player !== ME.name && B.kind === "obr") {
+  if (UI.popups && msg.player !== ME.name && B.kind === "obr" && msg.via !== "dice+") {
     B.notify(`${msg.who}: ${msg.label} ${msg.total != null ? "→ " + msg.total : ""}`);
   }
   renderLog();
 }
 
-function d20Roll(c, d, label, bonus, kind = "check", extra = {}) {
-  const r = rollD20(bonus, UI.adv, kind === "attack" ? d.critAt : 20);
-  const e = { label, total: r.total, text: r.text, kind, crit: kind === "attack" && r.crit, nat20: r.d20 === 20, fumble: r.fumble, lucky: d.lucky && r.d20 === 1, bonus, ...extra };
-  post(c, e);
+// A d20 roll: takes the current adv/dis toggle, posts to the log, returns the result.
+async function d20Roll(c, d, label, bonus, kind = "check", extra = {}) {
+  const mode = UI.adv;
   if (UI.adv !== 0) { UI.adv = 0; renderRollbar(); }
-  return r;
+  const r = await rollNotation(d20Notation(bonus, mode), `${c.name.split(" ")[0]}: ${label}`);
+  const critAt = extra.critAt != null ? extra.critAt : kind === "attack" ? d.critAt : 20;
+  delete extra.critAt;
+  const e = { label, total: r.total, text: r.text, kind, crit: kind === "attack" && r.d20 != null && r.d20 >= critAt, nat20: r.d20 === 20, fumble: r.d20 === 1, lucky: d.lucky && r.d20 === 1, bonus, via: r.via, ...extra };
+  post(c, e);
+  return { ...r, crit: e.crit };
+}
+// Any other dice formula ("2d6+1").
+async function rollF(c, formula, label, { double = false } = {}) {
+  return rollNotation(double ? doubled(formula) : formula, `${c.name.split(" ")[0]}: ${label}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +347,7 @@ function isTyping() {
 }
 
 function render() {
+  if (!DATA) return;
   if (isTyping()) { UI.dirty = true; return; }
   UI.dirty = false;
   const isGM = ME.role === "GM";
@@ -294,6 +360,7 @@ function render() {
   if (!UI.charId || !byId(UI.charId)) { app.innerHTML = renderPicker(claims); return; }
   const c = byId(UI.charId), s = stateOf(c.id), d = derive(c, s);
   const scrollY = app.parentElement.scrollTop || window.scrollY;
+  const diceNote = B.kind === "obr" ? (useDicePlus() ? "3D dice via Dice+" : DICE.want ? "Dice+ not found, rolling in panel" : "rolling in panel") : "local test mode";
   app.innerHTML = [
     renderHeader(c, s, d, isGM, claims),
     renderVitals(c, s, d),
@@ -306,7 +373,7 @@ function render() {
     section("rest", "Rest & level", renderRest(c, s, d, isGM)),
     section("log", "Roll log", `<div id="log" class="log">${renderLogInner()}</div>`),
     section("notes", "Notes", `<textarea data-field="notes" placeholder="Anything worth remembering…">${esc(s.notes)}</textarea>`),
-    `<div class="muted" style="font-size:10px;text-align:right">Stormwreck Sheets v${VERSION} · ${B.kind === "obr" ? "Owlbear" : "local test mode"} · ${esc(ME.name)} (${ME.role})</div>`,
+    `<div class="muted" style="font-size:10px;text-align:right">Stormwreck Sheets v${VERSION} · ${diceNote} · ${esc(ME.name)} (${ME.role})</div>`,
     `<div id="toast" class="toast"></div>`,
   ].join("");
   window.scrollTo(0, scrollY);
@@ -330,8 +397,10 @@ function renderPicker(claims) {
 function renderHeader(c, s, d, isGM, claims) {
   const tabs = isGM ? `<div class="tabs">${DATA.characters.map((x) => `<button class="${x.id === c.id ? "on" : ""}" data-act="tab" data-id="${x.id}">${esc(x.name.split(" ")[0])}</button>`).join("")}</div>` : "";
   const sub = `${esc(c.race)} ${esc(c.class)} ${d.lvl}${c.subclass ? Object.entries(c.subclass).filter(([L]) => +L <= d.lvl).map(([, n]) => " · " + esc(n)).join("") : ""} · ${esc(c.background)}`;
+  const diceLabel = B.kind === "obr" ? `${DICE.want ? "✓ " : ""}Roll 3D dice with Dice+${DICE.ready ? "" : " (not detected)"}` : "Dice+ (only inside Owlbear)";
   const menu = `<div class="menu${UI.menu ? " open" : ""}"><button class="icon" data-act="menu">⋯</button><div class="dd">
       <button data-act="switch">Switch character…</button>
+      <button data-act="dice3d">${diceLabel}</button>
       <button data-act="popups">${UI.popups ? "✓ " : ""}Pop up other people's rolls</button>
       <button data-act="claims">Who plays whom</button>
       ${isGM ? `<button data-act="resetChar">Reset ${esc(c.name.split(" ")[0])} to level 1…</button>` : ""}
@@ -408,10 +477,12 @@ function renderSkills(c, s, d) {
   }).join("")}</div>`;
 }
 
+const fresh = (x) => x && Date.now() - x.t < 120000;
+
 function renderAttacks(c, s, d) {
   const rows = c.attacks.map((a, i) => {
     const la = UI.lastAttack[c.id];
-    const critReady = la && la.i === i && la.crit && Date.now() - la.t < 90000;
+    const critReady = la && la.i === i && la.crit && fresh(la);
     return `<div class="row"><div class="nm">${esc(a.name)}<small>${esc(a.type)}${a.range ? " " + esc(a.range) + " ft" : ""} · ${esc(a.damageType)}${a.note ? " · " + esc(a.note) : ""}${a.quantity ? " · ×" + a.quantity : ""}</small></div>
       <div class="btns"><button data-act="hit" data-i="${i}">Hit ${sgn(a.attackBonus)}</button>
       <button data-act="dmg" data-i="${i}" ${critReady ? 'class="primary"' : ""}>${critReady ? "Crit dmg" : "Dmg"} ${esc(a.damage)}</button>
@@ -421,7 +492,7 @@ function renderAttacks(c, s, d) {
   return rows + note;
 }
 
-function pips(res, actUse = "use", actRestore = "restore") {
+function pips(res) {
   const dots = [];
   for (let i = 0; i < res.max; i++) dots.push(`<span class="pip ${i < res.max - res.used ? "" : "used"}" data-act="pip" data-r="${esc(res.name)}" data-i="${i}" title="Click to toggle"></span>`);
   return `<span class="pips">${res.max <= 12 ? dots.join("") : ""}<span class="cnt">${res.max - res.used}/${res.max}</span></span>`;
@@ -463,9 +534,19 @@ function renderFeatures(c, s, d) {
   }).join("");
 }
 
+function subst(formula, d) { return String(formula).replace("{level}", d.lvl).replace("{mod}", d.spell ? d.spell.mod : 0).replace("{prof}", PROF); }
+function addUpcast(formula, upcast, slotL, spellL) {
+  const extra = Math.max(0, slotL - spellL);
+  if (!upcast || !extra) return formula;
+  const t = parseNotation(upcast)[0];
+  return `${formula}+${t.count * extra}d${t.sides}`;
+}
+function spellDamageFormula(sp, d, slotL) { return subst(addUpcast(sp.roll.damage, sp.roll.upcast, slotL, sp.level), d); }
+
 function spellRow(c, s, d, name, { always = false } = {}) {
   const sp = SPELLS[name] || { level: 1, text: "(no description)" };
   const open = UI.open["s:" + name] ? " open" : "";
+  const r = sp.roll;
   let btns = "";
   if (sp.level === 0) btns = `<button class="sm" data-act="cast" data-n="${esc(name)}" data-l="0">Cast</button>`;
   else {
@@ -473,16 +554,21 @@ function spellRow(c, s, d, name, { always = false } = {}) {
     btns = opts.length ? opts.map((L) => `<button class="sm" data-act="cast" data-n="${esc(name)}" data-l="${L}">Cast ${ORD[L]}</button>`).join("") : `<button class="sm" disabled>No slots</button>`;
     if (sp.ritual) btns += ` <button class="sm ghost" data-act="cast" data-n="${esc(name)}" data-l="ritual">Ritual</button>`;
   }
+  const ls = UI.lastSpell[c.id];
+  if (r && r.kind === "attack" && ls && ls.name === name && fresh(ls)) {
+    btns += ` <button class="sm ${ls.crit ? "primary" : ""}" data-act="spellDmg" data-n="${esc(name)}">${ls.crit ? "Crit dmg" : "Dmg"} ${esc(spellDamageFormula(sp, d, ls.slotL))}</button>`;
+  }
+  if (sp.repeat && r) btns += ` <button class="sm ghost" data-act="cast" data-n="${esc(name)}" data-l="again" title="Later turns: no slot used">${r.kind === "attack" ? "Attack again" : "Trigger again"}</button>`;
   const tags = [sp.concentration ? "conc." : "", sp.ritual ? "ritual" : ""].filter(Boolean).map((t) => `<span class="tag">${t}</span>`).join("");
-  const rollTxt = sp.roll ? describeRoll(sp.roll, d) : "";
+  const rollTxt = r ? describeRoll(r, d) : "";
   return `<div class="spell${open}"><div class="top"><span class="nm" data-act="toggleSpell" data-n="${esc(name)}">${esc(name)}${always ? "<small>(always)</small>" : ""}</span>${tags}<span class="btns">${btns}</span></div>
     <div class="detail"><b>${sp.time}</b> · ${sp.range} · ${sp.duration}${rollTxt ? " · " + rollTxt : ""}<br>${esc(sp.text)}</div></div>`;
 }
 function describeRoll(r, d) {
-  if (r.kind === "attack") return `spell attack ${sgn(d.spell.atk)}, ${r.damage.replace("{mod}", d.spell.mod)} ${r.type}`;
-  if (r.kind === "save") return `DC ${d.spell.dc} ${r.save.toUpperCase()} save${r.damage ? `, ${r.damage} ${r.type}${r.half ? " (half)" : ""}` : ""}`;
+  if (r.kind === "attack") return `spell attack ${sgn(d.spell.atk)}, then ${r.damage.replace("{mod}", d.spell.mod)} ${r.type}`;
+  if (r.kind === "save") return `DC ${d.spell.dc} ${r.save.toUpperCase()} save${r.damage ? `, ${r.damage} ${r.type}${r.half ? " (half on save)" : ""}` : ""}`;
   if (r.kind === "heal") return `heals ${r.formula.replace("{mod}", d.spell.mod)}`;
-  if (r.kind === "missiles") return `${r.darts} darts × ${r.each} ${r.type}`;
+  if (r.kind === "missiles") return `${r.darts} darts × ${r.each} ${r.type}, auto-hit`;
   if (r.kind === "pool") return `${r.formula} HP pool`;
   return "";
 }
@@ -545,7 +631,7 @@ function renderLevelUp(c, s, d) {
     const always = (sc.alwaysPreparedByLevel || {})[String(L)];
     if (always) spellTxt += `<div class="gain"><b>Always prepared</b> ${esc(always.join(", "))}</div>`;
   }
-  const die = d.hitDieSides, bonus = c.hp.hpPerLevelBonus, avg = DIE_AVG[c.hp.hitDie] + bonus;
+  const bonus = c.hp.hpPerLevelBonus, avg = DIE_AVG[c.hp.hitDie] + bonus;
   const hpUI = lu.hp == null
     ? `<button class="sm" data-act="luHp" data-m="roll">Roll 1${c.hp.hitDie}+${bonus}</button> <button class="sm" data-act="luHp" data-m="avg">Take average (${avg})</button>`
     : `<b>+${lu.hp} HP</b> <span class="muted">(${lu.hpText})</span> <button class="sm ghost" data-act="luHpReset">change</button>`;
@@ -570,7 +656,7 @@ function renderLogInner() {
     const time = new Date(e.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const lucky = e.lucky && e.charId === UI.charId && i === UI.log.findIndex((x) => x.lucky && x.charId === e.charId) && Date.now() - e.t < 120000
       ? ` <button class="sm lucky" data-act="luckyReroll" data-i="${i}">Lucky: reroll the 1</button>` : "";
-    return `<div class="e${cls}"><span class="who">${esc(e.who)}</span> ${esc(e.label)}${e.total != null ? `<span class="tot">${e.total}</span>` : ""}${e.crit ? " <b>CRIT</b>" : e.nat20 ? " <b>nat 20</b>" : ""}${e.fumble ? " <b>nat 1</b>" : ""}${lucky}<br><span class="det">${esc(e.text || "")} <span style="float:right">${time}</span></span></div>`;
+    return `<div class="e${cls}"><span class="who">${esc(e.who)}</span> ${esc(e.label)}${e.total != null ? `<span class="tot">${e.total}</span>` : ""}${e.crit ? " <b>CRIT</b>" : e.nat20 ? " <b>nat 20</b>" : ""}${e.fumble ? " <b>nat 1</b>" : ""}${lucky}<br><span class="det">${esc(e.text || "")} <span style="float:right">${e.via === "dice+" ? "🎲 " : ""}${time}</span></span></div>`;
   }).join("");
 }
 function renderLog() { const el = document.getElementById("log"); if (el) el.innerHTML = renderLogInner(); }
@@ -582,51 +668,44 @@ function toast(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Spell casting
+// ---------------------------------------------------------------------------
+async function castSpell(c, s, d, name, slotArg) {
+  const sp = SPELLS[name] || { level: 1 };
+  const ritual = slotArg === "ritual", again = slotArg === "again";
+  const slotL = ritual || again ? (again && UI.lastSpell[c.id]?.name === name ? UI.lastSpell[c.id].slotL : sp.level) : +slotArg;
+  const how = slotL > sp.level ? ` (${ORD[slotL]}-level slot)` : ritual ? " (ritual)" : again ? " (again)" : "";
+  const r = sp.roll;
+  if (sp.level > 0 && !ritual && !again) await update(c.id, (st) => { st.slotsUsed[slotL] = (st.slotsUsed[slotL] || 0) + 1; });
+  if (!r) { post(c, { label: `casts ${name}${how}`, kind: "info" }); return; }
+  if (r.kind === "attack") {
+    const hit = await d20Roll(c, d, `${name}${how}: spell attack`, d.spell.atk, "attack", { critAt: 20 });
+    UI.lastSpell[c.id] = { name, slotL, crit: hit.crit, t: Date.now() };
+    render();
+  } else if (r.kind === "save") {
+    let text = `DC ${d.spell.dc} ${r.save.toUpperCase()} save`, total = null, kind = "info";
+    if (r.damage) { const dmg = await rollF(c, spellDamageFormula(sp, d, slotL), `${name} damage`); total = dmg.total; kind = "damage"; text += ` · ${dmg.text} = ${dmg.total} ${r.type}${r.half ? " (half on save)" : ""}`; }
+    post(c, { label: `casts ${name}${how}`, total, text, kind });
+  } else if (r.kind === "heal") {
+    let f = subst(addUpcast(r.formula, r.upcast, slotL, sp.level), d);
+    const dol = d.spell.discipleOfLife && sp.level > 0;
+    if (dol) f += `+${2 + slotL}`;
+    const h = await rollF(c, f, `${name} healing`);
+    post(c, { label: `casts ${name}${how}`, total: h.total, text: `heals ${h.text} = ${h.total}${dol ? " (incl. Disciple of Life)" : ""}`, kind: "heal" });
+  } else if (r.kind === "missiles") {
+    const darts = r.darts + Math.max(0, slotL - sp.level);
+    const t = parseNotation(r.each); const dice = t.find((x) => x.sides), konst = t.find((x) => x.konst);
+    const m = await rollF(c, `${darts * (dice ? dice.count : 1)}d${dice ? dice.sides : 4}+${darts * (konst ? konst.konst : 0)}`, `${name} (${darts} darts)`);
+    post(c, { label: `casts ${name}${how}`, total: m.total, text: `${darts} darts, auto-hit: ${m.text} = ${m.total} ${r.type}`, kind: "damage" });
+  } else if (r.kind === "pool") {
+    const p = await rollF(c, addUpcast(r.formula, r.upcast, slotL, sp.level), name);
+    post(c, { label: `casts ${name}${how}`, total: p.total, text: `${p.text} = ${p.total} HP of creatures affected`, kind: "info" });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Actions
 // ---------------------------------------------------------------------------
-function subst(formula, d) { return String(formula).replace("{level}", d.lvl).replace("{mod}", d.spell ? d.spell.mod : 0).replace("{prof}", PROF); }
-
-function addUpcast(formula, upcast, slotL, spellL) {
-  const extra = Math.max(0, slotL - spellL);
-  if (!upcast || !extra) return formula;
-  const t = parseTerms(upcast)[0];
-  return `${formula}+${t.count * extra}d${t.sides}`;
-}
-
-function castSpell(c, s, d, name, slotArg) {
-  const sp = SPELLS[name] || { level: 1 };
-  const ritual = slotArg === "ritual";
-  const slotL = ritual ? sp.level : +slotArg;
-  const label = `casts ${name}${slotL > sp.level ? ` (${ORD[slotL]}-level slot)` : ritual ? " (ritual)" : ""}`;
-  const r = sp.roll;
-  let text = "", total = null, kind = "info", crit = false;
-  if (r) {
-    if (r.kind === "attack") {
-      const hit = rollD20(d.spell.atk, UI.adv, 20);
-      const dmg = rollFormula(subst(addUpcast(r.damage, r.upcast, slotL, sp.level), d), { double: hit.crit });
-      total = hit.total; kind = "attack"; crit = hit.crit;
-      text = `attack ${hit.text} → ${hit.total}${hit.crit ? " CRIT" : ""} · damage ${dmg.text} = ${dmg.total} ${r.type}`;
-      if (UI.adv !== 0) { UI.adv = 0; }
-    } else if (r.kind === "save") {
-      text = `DC ${d.spell.dc} ${r.save.toUpperCase()} save`;
-      if (r.damage) { const dmg = rollFormula(subst(addUpcast(r.damage, r.upcast, slotL, sp.level), d)); total = dmg.total; kind = "damage"; text += ` · ${dmg.text} = ${dmg.total} ${r.type}${r.half ? " (half on save)" : ""}`; }
-    } else if (r.kind === "heal") {
-      let f = subst(addUpcast(r.formula, r.upcast, slotL, sp.level), d);
-      if (d.spell.discipleOfLife && sp.level > 0) f += `+${2 + slotL}`;
-      const h = rollFormula(f); total = h.total; kind = "heal"; text = `heals ${h.text} = ${h.total}${d.spell.discipleOfLife && sp.level > 0 ? " (incl. Disciple of Life)" : ""}`;
-    } else if (r.kind === "missiles") {
-      const darts = r.darts + Math.max(0, slotL - sp.level); const parts = []; let sum = 0;
-      for (let i = 0; i < darts; i++) { const x = rollFormula(r.each); parts.push(x.total); sum += x.total; }
-      total = sum; kind = "damage"; text = `${darts} darts: ${parts.join(" + ")} = ${sum} ${r.type}`;
-    } else if (r.kind === "pool") {
-      const p = rollFormula(addUpcast(r.formula, r.upcast, slotL, sp.level)); total = p.total; kind = "info"; text = `${p.text} = ${p.total} HP of creatures`;
-    }
-  }
-  post(c, { label, total, text, kind, crit });
-  if (sp.level > 0 && !ritual) update(c.id, (st) => { st.slotsUsed[slotL] = (st.slotsUsed[slotL] || 0) + 1; });
-  else render();
-}
-
 async function onAction(act, el, ev) {
   const c = UI.charId ? byId(UI.charId) : null;
   const s = c ? stateOf(c.id) : null;
@@ -638,6 +717,7 @@ async function onAction(act, el, ev) {
     case "toggleSpell": UI.open["s:" + ds.n] = !UI.open["s:" + ds.n]; render(); break;
     case "menu": UI.menu = !UI.menu; render(); break;
     case "popups": UI.popups = !UI.popups; UI.menu = false; saveUi(); render(); break;
+    case "dice3d": DICE.want = !DICE.want; UI.menu = false; try { localStorage.setItem("stormwreck-dice3d", JSON.stringify(DICE.want)); } catch {} if (DICE.want && !DICE.ready) B.emit("dice-plus/isReady", { requestId: uid(), timestamp: Date.now() }, "LOCAL").catch(() => {}); render(); break;
     case "claims": UI.acctClaimsOpen = !UI.acctClaimsOpen; UI.menu = false; render(); break;
     case "switch": UI.menu = false; UI.charId = null; saveUi(); render(); break;
     case "tab": UI.charId = ds.id; UI.levelup = null; UI.rest = null; UI.prepOpen = false; saveUi(); render(); break;
@@ -656,33 +736,41 @@ async function onAction(act, el, ev) {
     case "adv": UI.adv = +ds.v; renderRollbar(); break;
     case "customRoll": {
       const f = document.getElementById("custom").value.trim(); if (!f) break;
-      if (/^(\d*d20)?\s*([+-]\s*\d+)?$/i.test(f) && /d20/i.test(f)) { const b = +(f.replace(/\s+/g, "").replace(/^\d*d20/i, "") || 0); d20Roll(c, d, `rolls ${f}`, b, "custom"); }
-      else { try { const r = rollFormula(f); post(c, { label: `rolls ${f}`, total: r.total, text: r.text, kind: "custom" }); } catch { toast("Can't read that formula"); } }
       document.getElementById("custom").value = "";
+      if (!/^[\d\s+\-dDkKhHlL]+$/.test(f) || !/d\d+/i.test(f)) { toast("Use dice notation like 2d6+3"); break; }
+      if (/^(\d*d20)\s*([+-]\s*\d+)?$/i.test(f)) { const b = +(f.replace(/\s+/g, "").replace(/^\d*d20/i, "") || 0); await d20Roll(c, d, `rolls ${f}`, b, "custom"); }
+      else { const r = await rollF(c, f, f); post(c, { label: `rolls ${f}`, total: r.total, text: r.text, kind: "custom", via: r.via }); }
       break;
     }
-    case "check": d20Roll(c, d, `${ABIL_NAME[ds.a]} check`, d.mods[ds.a]); break;
-    case "save": d20Roll(c, d, `${ABIL_NAME[ds.a]} save`, d.saves[ds.a], "save"); break;
-    case "skill": { const sk = SKILLS.find((x) => x[0] === ds.k); d20Roll(c, d, `${sk[1]} check`, d.skills[ds.k]); break; }
-    case "initiative": d20Roll(c, d, "Initiative", c.initiative, "initiative"); break;
+    case "check": await d20Roll(c, d, `${ABIL_NAME[ds.a]} check`, d.mods[ds.a]); break;
+    case "save": await d20Roll(c, d, `${ABIL_NAME[ds.a]} save`, d.saves[ds.a], "save"); break;
+    case "skill": { const sk = SKILLS.find((x) => x[0] === ds.k); await d20Roll(c, d, `${sk[1]} check`, d.skills[ds.k]); break; }
+    case "initiative": await d20Roll(c, d, "Initiative", c.initiative, "initiative"); break;
 
     case "hit": {
       const a = c.attacks[+ds.i];
-      const r = d20Roll(c, d, `${a.name} attack`, a.attackBonus, "attack");
+      const r = await d20Roll(c, d, `${a.name} attack`, a.attackBonus, "attack");
       UI.lastAttack[c.id] = { i: +ds.i, crit: r.crit, t: Date.now() };
       render();
       break;
     }
     case "dmg": {
       const a = c.attacks[+ds.i]; const la = UI.lastAttack[c.id];
-      const crit = la && la.i === +ds.i && la.crit && Date.now() - la.t < 90000;
-      const r = rollFormula(a.damage, { double: crit });
-      post(c, { label: `${a.name} damage${crit ? " (critical)" : ""}`, total: r.total, text: `${r.text} ${a.damageType}`, kind: "damage" });
+      const crit = la && la.i === +ds.i && la.crit && fresh(la);
+      const r = await rollF(c, a.damage, `${a.name} damage`, { double: crit });
+      post(c, { label: `${a.name} damage${crit ? " (critical)" : ""}`, total: r.total, text: `${r.text} ${a.damageType}`, kind: "damage", via: r.via });
       if (crit) { UI.lastAttack[c.id] = null; render(); }
       break;
     }
-    case "sneak": { const la = UI.lastAttack[c.id]; const crit = la && la.i === +ds.i && la.crit && Date.now() - la.t < 90000; const r = rollFormula(d.sneakDie, { double: crit }); post(c, { label: `Sneak Attack${crit ? " (critical)" : ""}`, total: r.total, text: r.text, kind: "damage" }); break; }
-    case "rollFeat": { const r = rollFormula(ds.roll); post(c, { label: ds.n, total: r.total, text: r.text, kind: "feature" }); break; }
+    case "sneak": { const la = UI.lastAttack[c.id]; const crit = la && la.i === +ds.i && la.crit && fresh(la); const r = await rollF(c, d.sneakDie, "Sneak Attack", { double: crit }); post(c, { label: `Sneak Attack${crit ? " (critical)" : ""}`, total: r.total, text: r.text, kind: "damage", via: r.via }); break; }
+    case "spellDmg": {
+      const ls = UI.lastSpell[c.id]; const sp = SPELLS[ds.n]; if (!ls || !sp || ls.name !== ds.n) break;
+      const r = await rollF(c, spellDamageFormula(sp, d, ls.slotL), `${ds.n} damage`, { double: ls.crit });
+      post(c, { label: `${ds.n} damage${ls.crit ? " (critical)" : ""}`, total: r.total, text: `${r.text} ${sp.roll.type}`, kind: "damage", via: r.via });
+      UI.lastSpell[c.id] = null; render();
+      break;
+    }
+    case "rollFeat": { const r = await rollF(c, ds.roll, ds.n); post(c, { label: ds.n, total: r.total, text: r.text, kind: "feature", via: r.via }); break; }
 
     case "damage": case "heal": {
       const inp = document.getElementById("hpamt"); const n = Math.max(0, parseInt(inp.value || "0", 10)); if (!n) break;
@@ -696,15 +784,16 @@ async function onAction(act, el, ev) {
     case "editAc": if (!UI.editAc && !ev.target.closest("input")) { UI.editAc = true; render(); const i = document.querySelector('input[data-field="ac"]'); if (i) { i.focus(); i.select(); } } break;
     case "mageArmor": await update(c.id, (st) => { st.acOverride = el.checked ? 15 : null; }); break;
     case "deathSave": {
-      const r = rollD20(0, UI.adv, 20); UI.adv = 0;
-      let txt = r.text, outcome;
+      const mode = UI.adv; UI.adv = 0;
+      const r = await rollNotation(d20Notation(0, mode), `${c.name.split(" ")[0]}: death save`);
+      let outcome;
       await update(c.id, (st) => {
         if (r.d20 === 20) { st.hp = 1; st.ds = { s: 0, f: 0 }; outcome = "nat 20 — back up with 1 HP!"; }
         else if (r.d20 === 1) { st.ds.f = Math.min(3, st.ds.f + 2); outcome = "nat 1 — two failures"; }
         else if (r.total >= 10) { st.ds.s = Math.min(3, st.ds.s + 1); outcome = "success"; if (st.ds.s >= 3) { outcome = "third success — stable"; st.ds = { s: 0, f: 0 }; } }
         else { st.ds.f = Math.min(3, st.ds.f + 1); outcome = "failure"; if (st.ds.f >= 3) outcome = "third failure…"; }
       });
-      post(c, { label: `Death save: ${outcome}`, total: r.total, text: txt, kind: "save", nat20: r.d20 === 20, fumble: r.d20 === 1 });
+      post(c, { label: `Death save: ${outcome}`, total: r.total, text: r.text, kind: "save", nat20: r.d20 === 20, fumble: r.d20 === 1, via: r.via });
       break;
     }
     case "ds": await update(c.id, (st) => { const i = +ds.i; st.ds[ds.k] = st.ds[ds.k] > i ? i : i + 1; }); break;
@@ -712,33 +801,37 @@ async function onAction(act, el, ev) {
 
     case "pip": { const r = d.resources[ds.r]; const i = +ds.i; await update(c.id, (st) => { const left = r.max - (st.used[ds.r] || 0); st.used[ds.r] = left > i ? r.max - i : r.max - i - 1; st.used[ds.r] = Math.max(0, Math.min(r.max, st.used[ds.r])); }); break; }
     case "use": await update(c.id, (st) => { st.used[ds.r] = (st.used[ds.r] || 0) + 1; }); post(c, { label: `uses ${ds.r}`, kind: "feature" }); break;
-    case "useRoll": { const r = rollFormula(ds.roll); await update(c.id, (st) => { st.used[ds.r] = (st.used[ds.r] || 0) + 1; }); post(c, { label: `uses ${ds.r}`, total: r.total, text: r.text, kind: "feature" }); break; }
-    case "secondWind": { const r = rollFormula(`1d10+${d.lvl}`); await update(c.id, (st) => { st.used["Second Wind"] = (st.used["Second Wind"] || 0) + 1; st.hp = Math.min(d.maxHp, st.hp + r.total); }); post(c, { label: "Second Wind", total: r.total, text: `${r.text} HP regained`, kind: "heal" }); break; }
+    case "useRoll": { await update(c.id, (st) => { st.used[ds.r] = (st.used[ds.r] || 0) + 1; }); const r = await rollF(c, ds.roll, ds.r); post(c, { label: `uses ${ds.r}`, total: r.total, text: r.text, kind: "feature", via: r.via }); break; }
+    case "secondWind": { const r = await rollF(c, `1d10+${d.lvl}`, "Second Wind"); await update(c.id, (st) => { st.used["Second Wind"] = (st.used["Second Wind"] || 0) + 1; st.hp = Math.min(d.maxHp, st.hp + r.total); }); post(c, { label: "Second Wind", total: r.total, text: `${r.text} HP regained`, kind: "heal", via: r.via }); break; }
     case "layOnHands": { const n = Math.max(1, parseInt(document.getElementById("loh").value || "0", 10)); const r = d.resources["Lay on Hands"]; const amt = Math.min(n, r.max - r.used); if (!amt) break; await update(c.id, (st) => { st.used["Lay on Hands"] = (st.used["Lay on Hands"] || 0) + amt; }); post(c, { label: `Lay on Hands`, total: amt, text: `${amt} HP healed · ${r.max - r.used - amt} left in pool`, kind: "heal" }); break; }
     case "spendKi": await update(c.id, (st) => { st.used["Ki"] = (st.used["Ki"] || 0) + 1; }); post(c, { label: `uses ${ds.n} (1 ki)`, kind: "feature" }); break;
     case "flurry": {
       const ua = c.attacks.find((a) => a.name === "Unarmed Strike");
-      const r1 = rollD20(ua.attackBonus, UI.adv, 20), r2 = rollD20(ua.attackBonus, UI.adv, 20); UI.adv = 0;
       await update(c.id, (st) => { st.used["Ki"] = (st.used["Ki"] || 0) + 1; });
-      post(c, { label: "Flurry of Blows (1 ki): two unarmed strikes", text: `strike 1: ${r1.text} → ${r1.total}${r1.crit ? " CRIT" : ""} · strike 2: ${r2.text} → ${r2.total}${r2.crit ? " CRIT" : ""} · each hit ${ua.damage}`, kind: "attack", crit: r1.crit || r2.crit });
+      post(c, { label: "Flurry of Blows (1 ki): two unarmed strikes", kind: "feature" });
+      const r1 = await d20Roll(c, d, "Flurry strike 1", ua.attackBonus, "attack", { critAt: 20 });
+      const r2 = await d20Roll(c, d, "Flurry strike 2", ua.attackBonus, "attack", { critAt: 20 });
+      UI.lastAttack[c.id] = { i: c.attacks.indexOf(ua), crit: r1.crit || r2.crit, t: Date.now() };
+      render();
       break;
     }
     case "throwBack": {
-      const r = rollD20(4, UI.adv, 20); UI.adv = 0; const dmg = rollFormula("1d4+2", { double: r.crit });
       await update(c.id, (st) => { st.used["Ki"] = (st.used["Ki"] || 0) + 1; });
-      post(c, { label: "Deflect Missiles: throws it back (1 ki)", total: r.total, text: `${r.text} · damage ${dmg.text} = ${dmg.total}`, kind: "attack", crit: r.crit });
+      const r = await d20Roll(c, d, "Deflect Missiles: throws it back (1 ki)", 4, "attack", { critAt: 20 });
+      const dmg = await rollF(c, "1d4+2", "thrown missile damage", { double: r.crit });
+      post(c, { label: "Thrown missile damage", total: dmg.total, text: dmg.text, kind: "damage", via: dmg.via });
       break;
     }
     case "smite": {
       const L = +ds.l; const undead = document.getElementById("smiteUndead")?.checked;
-      const r = rollFormula(`${1 + L}d8${undead ? "+1d8" : ""}`);
       await update(c.id, (st) => { st.slotsUsed[L] = (st.slotsUsed[L] || 0) + 1; });
-      post(c, { label: `Divine Smite (${ORD[L]} slot${undead ? ", vs Undead/Fiend" : ""})`, total: r.total, text: `${r.text} radiant`, kind: "damage" });
+      const r = await rollF(c, `${1 + L + (undead ? 1 : 0)}d8`, "Divine Smite");
+      post(c, { label: `Divine Smite (${ORD[L]} slot${undead ? ", vs Undead/Fiend" : ""})`, total: r.total, text: `${r.text} radiant`, kind: "damage", via: r.via });
       break;
     }
 
     case "slot": { const L = ds.l, i = +ds.i, max = d.spell.slots[L]; await update(c.id, (st) => { const left = max - (st.slotsUsed[L] || 0); st.slotsUsed[L] = left > i ? max - i : max - i - 1; st.slotsUsed[L] = Math.max(0, Math.min(max, st.slotsUsed[L])); }); break; }
-    case "cast": castSpell(c, s, d, ds.n, ds.l); break;
+    case "cast": await castSpell(c, s, d, ds.n, ds.l); break;
     case "prepOpen": UI.prepOpen = !UI.prepOpen; render(); break;
     case "prepToggle": await update(c.id, (st) => { const i = st.prep.indexOf(ds.n); if (i >= 0) st.prep.splice(i, 1); else st.prep.push(ds.n); }); break;
 
@@ -747,9 +840,10 @@ async function onAction(act, el, ev) {
     case "hdDelta": UI.restHd = Math.max(0, Math.min(d.hdLeft, (UI.restHd || 0) + +ds.v)); render(); break;
     case "hdRoll": {
       const n = UI.restHd || 0; if (!n) break;
-      const r = rollFormula(`${n}${c.hp.hitDie}+${n * d.mods.con}`); const heal = Math.max(0, r.total);
+      const r = await rollF(c, `${n}${c.hp.hitDie}${n * d.mods.con >= 0 ? "+" : ""}${n * d.mods.con}`, "hit dice");
+      const heal = Math.max(0, r.total);
       await update(c.id, (st) => { st.hdUsed = (st.hdUsed || 0) + n; st.hp = Math.min(d.maxHp, st.hp + heal); });
-      UI.restHd = 0; post(c, { label: `spends ${n} hit ${n > 1 ? "dice" : "die"}`, total: heal, text: `${r.text} HP regained`, kind: "heal" }); render();
+      UI.restHd = 0; post(c, { label: `spends ${n} hit ${n > 1 ? "dice" : "die"}`, total: heal, text: `${r.text} HP regained`, kind: "heal", via: r.via }); render();
       break;
     }
     case "arcane": {
@@ -777,7 +871,7 @@ async function onAction(act, el, ev) {
     case "luCancel": UI.levelup = null; render(); break;
     case "luHp": {
       const bonus = c.hp.hpPerLevelBonus;
-      if (ds.m === "roll") { const r = rollFormula(`1${c.hp.hitDie}+${bonus}`); UI.levelup.hp = Math.max(1, r.total); UI.levelup.hpText = r.text; }
+      if (ds.m === "roll") { const r = await rollF(c, `1${c.hp.hitDie}+${bonus}`, `level ${d.lvl + 1} hit points`); UI.levelup.hp = Math.max(1, r.total); UI.levelup.hpText = r.text; }
       else { UI.levelup.hp = DIE_AVG[c.hp.hitDie] + bonus; UI.levelup.hpText = `average ${DIE_AVG[c.hp.hitDie]} + ${bonus}`; }
       render(); break;
     }
@@ -798,9 +892,10 @@ async function onAction(act, el, ev) {
 
     case "luckyReroll": {
       const e = UI.log[+ds.i]; if (!e) break;
-      const r = rollD20(e.bonus || 0, 0, e.kind === "attack" ? d.critAt : 20);
       UI.log.forEach((x) => { if (x.lucky && x.charId === c.id) x.lucky = false; });
-      post(c, { label: `${e.label} (Lucky reroll)`, total: r.total, text: r.text, kind: e.kind, crit: e.kind === "attack" && r.crit, nat20: r.d20 === 20, fumble: r.fumble, bonus: e.bonus });
+      const r = await rollNotation(d20Notation(e.bonus || 0, 0), `${c.name.split(" ")[0]}: Lucky reroll`);
+      const critAt = e.kind === "attack" ? d.critAt : 20;
+      post(c, { label: `${e.label} (Lucky reroll)`, total: r.total, text: r.text, kind: e.kind, crit: e.kind === "attack" && r.d20 >= critAt, nat20: r.d20 === 20, fumble: r.d20 === 1, bonus: e.bonus, via: r.via });
       break;
     }
   }
@@ -833,6 +928,7 @@ async function boot() {
   B.onMeta((m) => { META = m || {}; render(); });
   B.onMsg(addLog);
   B.onPlayer((p) => { ME = p; render(); });
+  setupDicePlus();
   if (ME.role !== "GM") {
     const claims = META[CLAIMS_KEY] || {};
     if (!(claims[ME.id] && byId(claims[ME.id].charId))) UI.charId = null;
@@ -845,7 +941,9 @@ async function boot() {
     if (el.tagName === "INPUT" && el.type === "checkbox") return; // handled on change
     const act = el.dataset.act;
     if (act !== "menu" && UI.menu && !ev.target.closest(".menu")) { UI.menu = false; }
-    onAction(act, el, ev).catch((e) => { console.error(e); toast("Something went wrong: " + e.message); });
+    if (UI.busy && el.tagName === "BUTTON") return; // one roll at a time while 3D dice are tumbling
+    UI.busy = true;
+    onAction(act, el, ev).catch((e) => { console.error(e); toast("Something went wrong: " + e.message); }).finally(() => { UI.busy = false; });
   });
   app.addEventListener("change", (ev) => {
     const el = ev.target;
