@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.3.0";
+const VERSION = "0.3.1";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -460,10 +460,7 @@ function renderBattle(c, isGM, claims) {
       const st = stateOf(e.charId); const ch = byId(e.charId); const dd = ch ? derive(ch, st) : null;
       hp = dd ? `<span class="bhp">${st.hp}/${dd.maxHp}${st.thp ? `<span class="thp"> +${st.thp}</span>` : ""}</span>` : "";
     } else if (isGM) {
-      hp = `<span class="bhp"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="-1">−</button><input type="number" data-field="bhp:${e.id}" value="${e.hp}" style="width:46px;text-align:center"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="1">+</button><span class="muted">/${e.maxHp}</span></span>
-        <button class="icon ghost" data-act="bHide" data-id="${e.id}" title="${e.show ? "HP visible to players" : "HP hidden from players"}">${e.show ? "👁" : "🙈"}</button>`;
-    } else if (e.show) {
-      hp = `<span class="bhp">${e.hp}/${e.maxHp}</span>`;
+      hp = `<span class="bhp"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="-1">−</button><input type="number" data-field="bhp:${e.id}" value="${e.hp}" style="width:46px;text-align:center"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="1">+</button><span class="muted">/${e.maxHp}</span></span>`;
     } else if (e.hp <= 0) {
       hp = `<span class="muted">down</span>`;
     }
@@ -848,7 +845,7 @@ async function onAction(act, el, ev) {
         const existing = b.entries.filter((e) => e.kind === "npc" && (e.name === name || e.name.startsWith(name + " "))).length;
         for (let i = 0; i < count; i++) {
           const n = count > 1 || existing ? `${name} ${existing + i + 1}` : name;
-          b.entries.push({ id: uid(), kind: "npc", name: n, hp, maxHp: hp, bonus, init: rollInternal(d20Notation(bonus, 0)).total, show: false });
+          b.entries.push({ id: uid(), kind: "npc", name: n, hp, maxHp: hp, bonus, init: rollInternal(d20Notation(bonus, 0)).total });
         }
         sortEntries(b);
       });
@@ -862,7 +859,6 @@ async function onAction(act, el, ev) {
     case "bClear": if (!UI.confirmClear) { UI.confirmClear = true; render(); setTimeout(() => { UI.confirmClear = false; render(); }, 4000); } else { UI.confirmClear = false; await updateBattle((b) => { b.entries = []; b.turn = 0; b.round = 1; }); } break;
     case "bRemove": ev.stopPropagation(); await updateBattle((b) => { const i = b.entries.findIndex((e) => e.id === ds.id); if (i >= 0) { b.entries.splice(i, 1); if (b.turn > i || b.turn >= b.entries.length) b.turn = Math.max(0, b.turn - 1); } }); break;
     case "bHp": ev.stopPropagation(); await updateBattle((b) => { const e = b.entries.find((x) => x.id === ds.id); if (e) e.hp = Math.max(0, e.hp + +ds.v); }); break;
-    case "bHide": ev.stopPropagation(); await updateBattle((b) => { const e = b.entries.find((x) => x.id === ds.id); if (e) e.show = !e.show; }); break;
     case "bSetTurn": if (ev.target.closest("input,button")) break; await updateBattle((b) => { b.turn = +ds.i; }); break;
 
     case "hit": {
