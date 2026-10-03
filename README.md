@@ -14,6 +14,8 @@ characters. Plain static files, no build step.
   ritual casting, Arcane Recovery. Spell descriptions included.
 - Short rest (spend hit dice) and long rest buttons.
 - Death saves.
+- Battle tracker at the top of every sheet: players join by clicking Initiative, the DM adds
+  enemies (name, HP, init bonus, count) with hidden HP, steps through turns and rounds.
 - DM-only **Level up** button that applies the next level's HP, features, slots and
   (for the wizard) two new spellbook picks.
 - All state lives in the Owlbear room, so everyone sees the same numbers. Players pick their

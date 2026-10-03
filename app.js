@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -226,6 +226,44 @@ function saveUi() {
 
 const charKey = (id) => `${NS}/char/${id}`;
 const CLAIMS_KEY = `${NS}/claims`;
+const BATTLE_KEY = `${NS}/battle`;
+
+// ---------------------------------------------------------------------------
+// Battle tracker (shared initiative order + hidden enemy HP)
+// ---------------------------------------------------------------------------
+function battle() { return META[BATTLE_KEY] || { round: 1, turn: 0, entries: [] }; }
+async function updateBattle(fn) {
+  const b = JSON.parse(JSON.stringify(battle()));
+  fn(b);
+  if (b.entries.length) b.turn = Math.max(0, Math.min(b.entries.length - 1, b.turn || 0)); else b.turn = 0;
+  META[BATTLE_KEY] = b;
+  render();
+  await B.setMeta({ [BATTLE_KEY]: b });
+}
+function sortEntries(b) {
+  const cur = b.entries[b.turn];
+  b.entries.sort((x, y) => (y.init ?? -99) - (x.init ?? -99) || (x.kind === "pc" ? -1 : 1) - (y.kind === "pc" ? -1 : 1));
+  if (cur) b.turn = Math.max(0, b.entries.indexOf(cur));
+}
+function advanceTurn(b, dir) {
+  const n = b.entries.length; if (!n) return;
+  for (let i = 0; i < n; i++) {
+    const was = b.turn;
+    b.turn = (b.turn + dir + n) % n;
+    if (dir > 0 && b.turn <= was && i === 0) b.round = (b.round || 1) + 1;
+    if (dir < 0 && b.turn >= was && i === 0) b.round = Math.max(1, (b.round || 1) - 1);
+    const e = b.entries[b.turn];
+    if (!(e.kind === "npc" && e.hp <= 0)) return; // skip downed enemies
+  }
+}
+// Called after a character rolls initiative on their sheet.
+async function joinBattle(c, init) {
+  await updateBattle((b) => {
+    const e = b.entries.find((x) => x.kind === "pc" && x.charId === c.id);
+    if (e) e.init = init; else b.entries.push({ id: uid(), kind: "pc", charId: c.id, name: c.name, init });
+    sortEntries(b);
+  });
+}
 const byId = (id) => DATA.characters.find((c) => c.id === id);
 
 function defaults(c) {
@@ -343,7 +381,7 @@ const app = document.getElementById("app");
 
 function isTyping() {
   const el = document.activeElement;
-  return el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && el.type === "text"));
+  return el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (el.type === "text" || el.type === "number")));
 }
 
 function render() {
@@ -363,6 +401,7 @@ function render() {
   const diceNote = B.kind === "obr" ? (useDicePlus() ? "3D dice via Dice+" : DICE.want ? "Dice+ not found, rolling in panel" : "rolling in panel") : "local test mode";
   app.innerHTML = [
     renderHeader(c, s, d, isGM, claims),
+    renderBattle(c, isGM, claims),
     renderVitals(c, s, d),
     `<div id="rollbar">${renderRollbar(true)}</div>`,
     section("abilities", "Abilities & saves", renderAbilities(c, s, d)),
@@ -408,6 +447,57 @@ function renderHeader(c, s, d, isGM, claims) {
   const claimsBox = UI.acctClaimsOpen ? `<div class="notice">${DATA.characters.map((x) => { const o = Object.values(claims).find((y) => y.charId === x.id); return `${esc(x.name)}: ${o ? esc(o.name) : "<span class='muted'>unclaimed</span>"}`; }).join("<br>")}</div>` : "";
   const resetBox = UI.confirmReset ? `<div class="notice warn">Reset <b>${esc(c.name)}</b> to level 1, full HP, all resources and default spells? <button class="sm" data-act="resetChar2">Yes, reset</button> <button class="sm ghost" data-act="cancelReset">Cancel</button></div>` : "";
   return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${claimsBox}${resetBox}`;
+}
+
+function renderBattle(c, isGM, claims) {
+  const b = battle();
+  if (!isGM && !b.entries.length) return "";
+  const myChar = UI.charId;
+  const rows = b.entries.map((e, i) => {
+    const cur = i === b.turn;
+    let hp = "";
+    if (e.kind === "pc") {
+      const st = stateOf(e.charId); const ch = byId(e.charId); const dd = ch ? derive(ch, st) : null;
+      hp = dd ? `<span class="bhp">${st.hp}/${dd.maxHp}${st.thp ? `<span class="thp"> +${st.thp}</span>` : ""}</span>` : "";
+    } else if (isGM) {
+      hp = `<span class="bhp"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="-1">−</button><input type="number" data-field="bhp:${e.id}" value="${e.hp}" style="width:46px;text-align:center"><button class="sm" data-act="bHp" data-id="${e.id}" data-v="1">+</button><span class="muted">/${e.maxHp}</span></span>
+        <button class="icon ghost" data-act="bHide" data-id="${e.id}" title="${e.show ? "HP visible to players" : "HP hidden from players"}">${e.show ? "👁" : "🙈"}</button>`;
+    } else if (e.show) {
+      hp = `<span class="bhp">${e.hp}/${e.maxHp}</span>`;
+    } else if (e.hp <= 0) {
+      hp = `<span class="muted">down</span>`;
+    }
+    const init = isGM ? `<input type="number" data-field="binit:${e.id}" value="${e.init ?? ""}" style="width:44px;text-align:center" title="Initiative">` : `<b>${e.init ?? "–"}</b>`;
+    const dmgInput = isGM && e.kind === "npc" ? `<input type="number" data-field="bdmg:${e.id}" placeholder="dmg" style="width:48px" title="Type damage, press Enter">` : "";
+    const cls = `brow${cur ? " cur" : ""}${e.kind === "npc" && e.hp <= 0 ? " down" : ""}${e.kind === "pc" && e.charId === myChar ? " me" : ""}`;
+    return `<div class="${cls}" ${isGM ? `data-act="bSetTurn" data-i="${i}"` : ""}>
+      <span class="marker">${cur ? "▶" : ""}</span>
+      <span class="binit">${init}</span>
+      <span class="bname">${esc(e.name)}${e.kind === "npc" ? "" : ""}</span>
+      ${hp}${dmgInput}
+      ${isGM ? `<button class="icon ghost" data-act="bRemove" data-id="${e.id}" title="Remove">×</button>` : ""}
+    </div>`;
+  }).join("");
+  const empty = !b.entries.length ? `<div class="muted" style="font-size:12px">No one in the fight yet. Players: click Initiative on your sheet. Add enemies below.</div>` : "";
+  const controls = isGM ? `<div class="flex" style="margin:6px 0">
+      <button class="sm primary" data-act="bNext" ${!b.entries.length ? "disabled" : ""}>Next turn ▶</button>
+      <button class="sm" data-act="bPrev" ${!b.entries.length ? "disabled" : ""}>◀ Back</button>
+      <span class="tag">Round ${b.round || 1}</span>
+      <span class="spacer"></span>
+      <button class="sm" data-act="bSort" ${!b.entries.length ? "disabled" : ""}>Sort</button>
+      <button class="sm" data-act="bReroll" ${!b.entries.some((e) => e.kind === "npc") ? "disabled" : ""} title="Re-roll initiative for all enemies">Re-roll enemies</button>
+      <button class="sm ghost" data-act="bClear" ${!b.entries.length ? "disabled" : ""}>${UI.confirmClear ? "Really clear?" : "Clear"}</button>
+    </div>
+    <div class="badd">
+      <input type="text" id="bName" placeholder="Enemy name" style="flex:1;min-width:90px">
+      <input type="number" id="bHpN" placeholder="HP" min="1" style="width:56px">
+      <input type="number" id="bBonus" placeholder="init +" style="width:56px">
+      <input type="number" id="bCount" placeholder="×1" min="1" max="12" style="width:46px">
+      <button class="sm" data-act="bAdd">Add & roll init</button>
+    </div>` : `<div class="muted" style="font-size:11px">Round ${b.round || 1}${b.entries[b.turn] ? ` · ${esc(b.entries[b.turn].name)}'s turn` : ""}</div>`;
+  const body = `${rows}${empty}${controls}`;
+  const title = `Battle${b.entries.length ? ` · round ${b.round || 1}` : ""}`;
+  return section("battle", title, body);
 }
 
 function renderVitals(c, s, d) {
@@ -745,7 +835,35 @@ async function onAction(act, el, ev) {
     case "check": await d20Roll(c, d, `${ABIL_NAME[ds.a]} check`, d.mods[ds.a]); break;
     case "save": await d20Roll(c, d, `${ABIL_NAME[ds.a]} save`, d.saves[ds.a], "save"); break;
     case "skill": { const sk = SKILLS.find((x) => x[0] === ds.k); await d20Roll(c, d, `${sk[1]} check`, d.skills[ds.k]); break; }
-    case "initiative": await d20Roll(c, d, "Initiative", c.initiative, "initiative"); break;
+    case "initiative": { const r = await d20Roll(c, d, "Initiative", c.initiative, "initiative"); await joinBattle(c, r.total); break; }
+
+    // ----- battle tracker (GM) -----
+    case "bAdd": {
+      const name = (document.getElementById("bName").value || "").trim() || "Enemy";
+      const hp = Math.max(1, parseInt(document.getElementById("bHpN").value || "1", 10) || 1);
+      const bonus = parseInt(document.getElementById("bBonus").value || "0", 10) || 0;
+      const count = Math.max(1, Math.min(12, parseInt(document.getElementById("bCount").value || "1", 10) || 1));
+      if (document.activeElement) document.activeElement.blur(); // let the list re-render right away
+      await updateBattle((b) => {
+        const existing = b.entries.filter((e) => e.kind === "npc" && (e.name === name || e.name.startsWith(name + " "))).length;
+        for (let i = 0; i < count; i++) {
+          const n = count > 1 || existing ? `${name} ${existing + i + 1}` : name;
+          b.entries.push({ id: uid(), kind: "npc", name: n, hp, maxHp: hp, bonus, init: rollInternal(d20Notation(bonus, 0)).total, show: false });
+        }
+        sortEntries(b);
+      });
+      const el = document.getElementById("bName"); if (el) { el.value = ""; el.focus(); }
+      break;
+    }
+    case "bNext": await updateBattle((b) => advanceTurn(b, 1)); break;
+    case "bPrev": await updateBattle((b) => advanceTurn(b, -1)); break;
+    case "bSort": await updateBattle((b) => sortEntries(b)); break;
+    case "bReroll": await updateBattle((b) => { for (const e of b.entries) if (e.kind === "npc") e.init = rollInternal(d20Notation(e.bonus || 0, 0)).total; sortEntries(b); }); break;
+    case "bClear": if (!UI.confirmClear) { UI.confirmClear = true; render(); setTimeout(() => { UI.confirmClear = false; render(); }, 4000); } else { UI.confirmClear = false; await updateBattle((b) => { b.entries = []; b.turn = 0; b.round = 1; }); } break;
+    case "bRemove": ev.stopPropagation(); await updateBattle((b) => { const i = b.entries.findIndex((e) => e.id === ds.id); if (i >= 0) { b.entries.splice(i, 1); if (b.turn > i || b.turn >= b.entries.length) b.turn = Math.max(0, b.turn - 1); } }); break;
+    case "bHp": ev.stopPropagation(); await updateBattle((b) => { const e = b.entries.find((x) => x.id === ds.id); if (e) e.hp = Math.max(0, e.hp + +ds.v); }); break;
+    case "bHide": ev.stopPropagation(); await updateBattle((b) => { const e = b.entries.find((x) => x.id === ds.id); if (e) e.show = !e.show; }); break;
+    case "bSetTurn": if (ev.target.closest("input,button")) break; await updateBattle((b) => { b.turn = +ds.i; }); break;
 
     case "hit": {
       const a = c.attacks[+ds.i];
@@ -902,6 +1020,17 @@ async function onAction(act, el, ev) {
 }
 
 async function onField(field, el) {
+  if (field.startsWith("bhp:") || field.startsWith("binit:") || field.startsWith("bdmg:")) {
+    const [kind, id] = field.split(":"); const v = parseInt(el.value, 10);
+    if (kind === "bdmg" && (isNaN(v) || !v)) return;
+    await updateBattle((b) => {
+      const e = b.entries.find((x) => x.id === id); if (!e) return;
+      if (kind === "bhp" && !isNaN(v)) e.hp = Math.max(0, v);
+      if (kind === "binit") { e.init = isNaN(v) ? null : v; sortEntries(b); }
+      if (kind === "bdmg") e.hp = Math.max(0, e.hp - v);
+    });
+    return;
+  }
   const c = byId(UI.charId); if (!c) return;
   if (field === "notes") await update(c.id, (st) => { st.notes = el.value.slice(0, 1500); });
   if (field === "thp") await update(c.id, (st) => { st.thp = Math.max(0, parseInt(el.value || "0", 10) || 0); });
@@ -925,7 +1054,15 @@ async function boot() {
   META = (await B.getMeta()) || {};
   const applyTheme = (m) => document.documentElement.setAttribute("data-theme", m === "LIGHT" ? "light" : "dark");
   applyTheme(await B.theme()); B.onTheme(applyTheme);
-  B.onMeta((m) => { META = m || {}; render(); });
+  B.onMeta((m) => {
+    META = m || {};
+    // "Your turn" popup when the battle pointer lands on my character.
+    const b = battle(); const e = b.entries[b.turn];
+    const key = e ? `${e.id}:${b.round}` : "";
+    if (key && key !== UI.lastTurnKey && e.kind === "pc" && e.charId === UI.charId && ME.role !== "GM" && B.kind === "obr") B.notify(`${e.name}: your turn!`, "INFO");
+    UI.lastTurnKey = key;
+    render();
+  });
   B.onMsg(addLog);
   B.onPlayer((p) => { ME = p; render(); });
   setupDicePlus();
@@ -954,6 +1091,8 @@ async function boot() {
     if (ev.key === "Enter" && ev.target.dataset.enter) { ev.preventDefault(); const b = app.querySelector(`[data-act="${ev.target.dataset.enter}"]`); if (b) b.click(); }
     if (ev.key === "Enter" && ev.target.dataset.field === "ac") ev.target.blur();
     if (ev.key === "Enter" && ev.target.id === "hpamt") { ev.preventDefault(); app.querySelector('[data-act="damage"]').click(); }
+    if (ev.key === "Enter" && ["bName", "bHpN", "bBonus", "bCount"].includes(ev.target.id)) { ev.preventDefault(); app.querySelector('[data-act="bAdd"]').click(); }
+    if (ev.key === "Enter" && (ev.target.dataset.field || "").startsWith("b")) { ev.preventDefault(); ev.target.blur(); }
   });
   app.addEventListener("focusout", () => { if (UI.dirty) setTimeout(() => { if (!isTyping()) render(); }, 50); });
   document.addEventListener("click", (ev) => { if (UI.menu && !ev.target.closest(".menu")) { UI.menu = false; render(); } });

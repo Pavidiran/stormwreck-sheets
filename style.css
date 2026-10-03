@@ -172,3 +172,15 @@ section.card > .body { padding: 4px 10px 10px; }
 .lucky { color: var(--warn); }
 .levelup .gain { padding: 3px 0; }
 .levelup .gain b { color: var(--accent); }
+
+/* battle tracker */
+.brow { display: flex; align-items: center; gap: 6px; padding: 4px 4px; border-bottom: 1px solid var(--line); border-radius: 6px; }
+.brow:last-of-type { border-bottom: 0; }
+.brow.cur { background: var(--bg3); outline: 1px solid var(--accent); }
+.brow.me .bname { color: var(--accent); font-weight: 600; }
+.brow.down .bname { text-decoration: line-through; color: var(--fg2); }
+.brow .marker { width: 12px; color: var(--accent); font-size: 11px; }
+.brow .binit { min-width: 30px; text-align: center; }
+.brow .bname { flex: 1; min-width: 70px; }
+.brow .bhp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.badd { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
