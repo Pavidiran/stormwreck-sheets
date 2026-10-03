@@ -1,0 +1,361 @@
+{
+  "campaign": "Dragons of Stormwreck Isle",
+  "ruleset": "D&D 5e (2014), starter-set simplified pregens, levels 1-3",
+  "notes": [
+    "Proficiency bonus is +2 at all levels 1-3.",
+    "On level up each character adds one Hit Die and rolls that die + the listed hpPerLevelBonus (or takes the fixed average: d6=4, d8=5, d10=6).",
+    "Spell slot counts under spellcasting.slotsByLevel are keyed by character level, then by spell level.",
+    "Resources with recharge 'short' reset on a short or long rest; 'long' only on a long rest."
+  ],
+  "characters": [
+    {
+      "id": "aerendil",
+      "name": "Aerendil Hotenow",
+      "race": "Wood Elf",
+      "class": "Fighter",
+      "subclass": { "3": "Champion" },
+      "background": "Folk Hero",
+      "alignment": "Neutral Good",
+      "size": "Medium",
+      "speed": 35,
+      "abilities": { "str": 13, "dex": 17, "con": 14, "int": 10, "wis": 13, "cha": 8 },
+      "saveProficiencies": ["str", "con"],
+      "skillProficiencies": ["acrobatics", "animalHandling", "history", "perception", "survival"],
+      "expertise": [],
+      "ac": 14,
+      "acNote": "Leather armor + Dex",
+      "hp": { "level1Max": 12, "hitDie": "d10", "hpPerLevelBonus": 2 },
+      "initiative": 3,
+      "passivePerception": 13,
+      "senses": ["Darkvision 60 ft."],
+      "resistances": [],
+      "languages": ["Common", "Dwarvish", "Elvish", "Halfling"],
+      "otherProficiencies": ["All armor", "Shields", "Simple weapons", "Martial weapons"],
+      "attacks": [
+        { "name": "Greatsword", "type": "melee", "attackBonus": 3, "damage": "2d6+1", "damageType": "slashing" },
+        { "name": "Longbow", "type": "ranged", "range": "150/600", "attackBonus": 7, "damage": "1d8+3", "damageType": "piercing", "note": "+2 Archery already included" }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Second Wind", "action": "bonus", "description": "Regain 1d10 + fighter level HP.", "resource": { "max": 1, "recharge": "short" }, "roll": "1d10+{level}" },
+          { "name": "Fighting Style: Archery", "description": "+2 to attack rolls with ranged weapons (included in longbow)." },
+          { "name": "Darkvision", "description": "See 60 ft. in dim light as bright, darkness as dim." },
+          { "name": "Fey Ancestry", "description": "Advantage on saves against being charmed." },
+          { "name": "Trance", "description": "Long rest in 4 hours of meditation; magic can't put you to sleep." },
+          { "name": "Mask of the Wild", "description": "Can Hide when only lightly obscured by natural phenomena." }
+        ],
+        "2": [
+          { "name": "Action Surge", "description": "Take one additional action on your turn.", "resource": { "max": 1, "recharge": "short" } }
+        ],
+        "3": [
+          { "name": "Improved Critical", "description": "Weapon attacks crit on 19 or 20." }
+        ]
+      },
+      "spellcasting": null,
+      "equipment": ["Leather armor", "Longbow", "20 arrows", "Greatsword", "Backpack", "Bedroll", "Mess kit", "Tinderbox", "10 torches", "10 days of rations", "Waterskin", "50 ft. hempen rope", "Shovel", "Iron pot", "Common clothes", "Pouch"],
+      "coins": { "gp": 10 }
+    },
+    {
+      "id": "aren",
+      "name": "Aren Thalor",
+      "race": "High Elf",
+      "class": "Wizard",
+      "subclass": { "2": "School of Evocation" },
+      "background": "Sage",
+      "alignment": "Neutral Good",
+      "size": "Medium",
+      "speed": 30,
+      "abilities": { "str": 10, "dex": 15, "con": 14, "int": 16, "wis": 12, "cha": 8 },
+      "saveProficiencies": ["int", "wis"],
+      "skillProficiencies": ["arcana", "history", "insight", "investigation", "perception"],
+      "expertise": [],
+      "ac": 12,
+      "acNote": "No armor, Dex only. Mage armor makes it 15.",
+      "hp": { "level1Max": 8, "hitDie": "d6", "hpPerLevelBonus": 2 },
+      "initiative": 2,
+      "passivePerception": 13,
+      "senses": ["Darkvision 60 ft."],
+      "resistances": [],
+      "languages": ["Common", "Celestial", "Draconic", "Dwarvish", "Elvish"],
+      "otherProficiencies": ["Daggers", "Darts", "Light crossbows", "Longswords", "Quarterstaffs", "Shortbows", "Shortswords", "Slings"],
+      "attacks": [
+        { "name": "Shortsword", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "piercing" }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Ritual Casting", "description": "Cast ritual-tagged spellbook spells as rituals without preparing them." },
+          { "name": "Arcane Recovery", "description": "Once per day during a short rest, recover one 1st-level slot (two 1st-level slots or one 2nd-level slot from level 3).", "resource": { "max": 1, "recharge": "long" } },
+          { "name": "Darkvision", "description": "See 60 ft. in dim light as bright, darkness as dim." },
+          { "name": "Fey Ancestry", "description": "Advantage on saves against being charmed." },
+          { "name": "Trance", "description": "Long rest in 4 hours of meditation; magic can't put you to sleep." }
+        ],
+        "2": [
+          { "name": "Evocation Savant", "description": "Copying evocation spells into the spellbook costs half the gold and time." },
+          { "name": "Sculpt Spells", "description": "When casting an evocation spell, choose 1 + spell level creatures; they auto-succeed their save and take no damage on a half-damage effect." }
+        ],
+        "3": [
+          { "name": "2nd-Level Spells", "description": "Can prepare and cast 2nd-level spells. Arcane Recovery now restores two 1st-level slots or one 2nd-level slot." }
+        ]
+      },
+      "spellcasting": {
+        "ability": "int",
+        "saveDC": 13,
+        "attackBonus": 5,
+        "preparation": "prepared",
+        "preparedCountByLevel": { "1": 4, "2": 5, "3": 6 },
+        "slotsByLevel": {
+          "1": { "1": 2 },
+          "2": { "1": 3 },
+          "3": { "1": 4, "2": 2 }
+        },
+        "cantrips": ["Mage Hand", "Prestidigitation", "Ray of Frost", "Shocking Grasp"],
+        "spellbook": ["Detect Magic", "Mage Armor", "Magic Missile", "Shield", "Sleep", "Thunderwave"],
+        "spellbookNote": "Add two spells from availableSpells each time a wizard level is gained.",
+        "alwaysPreparedByLevel": {},
+        "availableSpells": {
+          "1": ["Comprehend Languages (ritual)", "Detect Magic (ritual)", "Mage Armor", "Magic Missile", "Protection from Evil and Good", "Ray of Sickness", "Shield", "Sleep", "Thunderwave"],
+          "2": ["Flaming Sphere", "Hold Person", "Invisibility", "Misty Step", "Shatter"]
+        }
+      },
+      "equipment": ["Shortsword", "Component pouch", "Spellbook", "Backpack", "Book of lore", "2 bottles of ink", "Ink pen", "10 sheets of parchment", "Little bag of sand", "Small knife", "Letter from a dead colleague", "Common clothes", "Pouch"],
+      "coins": { "gp": 10 }
+    },
+    {
+      "id": "arthur",
+      "name": "Arthur von Corlinn",
+      "race": "Human",
+      "class": "Paladin",
+      "subclass": { "3": "Oath of Devotion" },
+      "background": "Noble",
+      "alignment": "Lawful Good",
+      "size": "Medium",
+      "speed": 30,
+      "abilities": { "str": 16, "dex": 9, "con": 15, "int": 11, "wis": 13, "cha": 14 },
+      "saveProficiencies": ["wis", "cha"],
+      "skillProficiencies": ["athletics", "history", "insight", "persuasion"],
+      "expertise": [],
+      "ac": 18,
+      "acNote": "Chain mail + shield. Disadvantage on Stealth.",
+      "hp": { "level1Max": 12, "hitDie": "d10", "hpPerLevelBonus": 2 },
+      "initiative": -1,
+      "passivePerception": 11,
+      "senses": [],
+      "resistances": [],
+      "languages": ["Common", "Draconic", "Dwarvish", "Giant"],
+      "otherProficiencies": ["All armor", "Shields", "Simple weapons", "Martial weapons"],
+      "attacks": [
+        { "name": "Battleaxe", "type": "melee", "attackBonus": 5, "damage": "1d8+3", "damageType": "slashing", "note": "1d10+3 two-handed (no shield)" },
+        { "name": "Javelin", "type": "melee/thrown", "range": "30/120", "attackBonus": 5, "damage": "1d6+3", "damageType": "piercing", "quantity": 5 }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Divine Sense", "action": "action", "description": "Until end of next turn, know location of Celestials, Fiends, Undead within 60 ft. and consecrated/desecrated places." },
+          { "name": "Lay on Hands", "action": "action", "description": "Healing pool: 5 HP at level 1, 10 at level 2, 15 at level 3. Spend 5 to cure a disease or poison.", "resource": { "maxByLevel": { "1": 5, "2": 10, "3": 15 }, "recharge": "long" } }
+        ],
+        "2": [
+          { "name": "Spellcasting", "description": "Charisma caster, DC 12, attack +4. See spellcasting." },
+          { "name": "Fighting Style: Protection", "action": "reaction", "description": "Impose disadvantage on an attack against a creature within 5 ft. of you. Requires shield." },
+          { "name": "Divine Smite", "description": "On a melee hit, expend a spell slot for +2d8 radiant (+1d8 vs Undead or Fiend).", "roll": "2d8" }
+        ],
+        "3": [
+          { "name": "Divine Health", "description": "Immune to disease." },
+          { "name": "Channel Divinity", "action": "action", "description": "Sacred Weapon (+2 to attacks with one weapon for 1 min, sheds light) or Turn the Unholy (Fiends/Undead within 30 ft., DC 12 Wis save or turned 1 min).", "resource": { "max": 1, "recharge": "short" } }
+        ]
+      },
+      "spellcasting": {
+        "startsAtLevel": 2,
+        "ability": "cha",
+        "saveDC": 12,
+        "attackBonus": 4,
+        "preparation": "prepared",
+        "preparedCountByLevel": { "2": 3, "3": 3 },
+        "slotsByLevel": {
+          "2": { "1": 2 },
+          "3": { "1": 3 }
+        },
+        "cantrips": [],
+        "alwaysPreparedByLevel": { "3": ["Protection from Evil and Good", "Sanctuary"] },
+        "availableSpells": {
+          "1": ["Bless", "Command", "Cure Wounds", "Detect Magic", "Protection from Evil and Good", "Shield of Faith"]
+        }
+      },
+      "equipment": ["Chain mail", "Battleaxe", "Shield", "5 javelins", "Holy symbol", "Backpack", "Bedroll", "Mess kit", "Tinderbox", "10 torches", "10 days of rations", "Waterskin", "50 ft. hempen rope", "Fine clothes", "Signet ring", "Scroll of pedigree", "Pouch"],
+      "coins": { "gp": 25 }
+    },
+    {
+      "id": "cowboybee",
+      "name": "Cowboy Bee",
+      "race": "Lightfoot Halfling",
+      "class": "Rogue",
+      "subclass": { "3": "Thief" },
+      "background": "Criminal",
+      "alignment": "Chaotic Good",
+      "size": "Small",
+      "speed": 25,
+      "abilities": { "str": 8, "dex": 16, "con": 12, "int": 13, "wis": 10, "cha": 16 },
+      "saveProficiencies": ["dex", "int"],
+      "skillProficiencies": ["acrobatics", "deception", "investigation", "perception", "sleightOfHand", "stealth"],
+      "expertise": ["stealth", "thievesTools"],
+      "ac": 14,
+      "acNote": "Leather armor + Dex",
+      "hp": { "level1Max": 9, "hitDie": "d8", "hpPerLevelBonus": 1 },
+      "initiative": 3,
+      "passivePerception": 12,
+      "senses": [],
+      "resistances": [],
+      "languages": ["Common", "Goblin", "Halfling", "Thieves' Cant"],
+      "otherProficiencies": ["Light armor", "Simple weapons", "Hand crossbows", "Longswords", "Rapiers", "Shortswords", "Thieves' tools (expertise, +7)"],
+      "attacks": [
+        { "name": "Dagger", "type": "melee/thrown", "range": "20/60", "attackBonus": 5, "damage": "1d4+3", "damageType": "piercing", "quantity": 2 },
+        { "name": "Shortbow", "type": "ranged", "range": "80/320", "attackBonus": 5, "damage": "1d6+3", "damageType": "piercing" }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Sneak Attack", "description": "Once per turn, +1d6 (2d6 from level 3) on a Dex-based hit with advantage, or if an ally is within 5 ft. of the target. Not with disadvantage.", "rollByLevel": { "1": "1d6", "2": "1d6", "3": "2d6" } },
+          { "name": "Expertise", "description": "Double proficiency on Stealth and thieves' tools (included)." },
+          { "name": "Thieves' Cant", "description": "Secret rogue dialect and signs." },
+          { "name": "Lucky", "description": "Reroll a natural 1 on attack, check, or save; must use the new roll." },
+          { "name": "Brave", "description": "Advantage on saves against being frightened." },
+          { "name": "Halfling Nimbleness", "description": "Move through the space of any creature larger than you." },
+          { "name": "Naturally Stealthy", "description": "Can hide when obscured by a creature at least one size larger." }
+        ],
+        "2": [
+          { "name": "Cunning Action", "action": "bonus", "description": "Dash, Disengage, or Hide as a bonus action." }
+        ],
+        "3": [
+          { "name": "Second-Story Work", "description": "Climbing costs no extra movement; running jump distance +3 ft. (Dex mod)." },
+          { "name": "Fast Hands", "action": "bonus", "description": "Use Cunning Action to make a Sleight of Hand check, Use an Object, or use thieves' tools." },
+          { "name": "Sneak Attack 2d6", "description": "Sneak Attack damage becomes 2d6." }
+        ]
+      },
+      "spellcasting": null,
+      "equipment": ["Leather armor", "Shortbow", "20 arrows", "2 daggers", "Thieves' tools", "Backpack", "Bag of 1,000 ball bearings", "10 ft. string", "Bell", "5 candles", "2 crowbars", "Hammer", "10 pitons", "Hooded lantern", "2 flasks of oil", "5 days of rations", "Tinderbox", "Waterskin", "50 ft. hempen rope", "Dark common clothes with hood", "Pouch"],
+      "coins": { "gp": 15 }
+    },
+    {
+      "id": "maveith",
+      "name": "Maveith",
+      "sourceNote": "D&D Beyond export (player RoyalOrange7060), not a starter-set pregen. Alignment not on sheet.",
+      "race": "Goliath",
+      "class": "Monk",
+      "subclass": { "3": "Way of the Open Hand" },
+      "background": "Sage",
+      "alignment": null,
+      "size": "Medium",
+      "speed": 30,
+      "speedByLevel": { "1": 30, "2": 40, "3": 40 },
+      "abilities": { "str": 14, "dex": 15, "con": 14, "int": 10, "wis": 14, "cha": 8 },
+      "saveProficiencies": ["str", "dex"],
+      "skillProficiencies": ["acrobatics", "arcana", "athletics", "history", "stealth"],
+      "expertise": [],
+      "ac": 14,
+      "acNote": "Unarmored Defense: 10 + Dex + Wis",
+      "hp": { "level1Max": 10, "hitDie": "d8", "hpPerLevelBonus": 2 },
+      "initiative": 2,
+      "passivePerception": 12,
+      "passiveInsight": 12,
+      "passiveInvestigation": 10,
+      "senses": [],
+      "resistances": ["cold"],
+      "languages": ["Common", "Draconic", "Elvish", "Giant"],
+      "otherProficiencies": ["Simple weapons", "Martial weapons (as listed on sheet)", "Smith's tools"],
+      "attacks": [
+        { "name": "Quarterstaff", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "bludgeoning", "note": "1d8+2 two-handed" },
+        { "name": "Unarmed Strike", "type": "melee", "attackBonus": 4, "damage": "1d4+2", "damageType": "bludgeoning" },
+        { "name": "Dart", "type": "ranged", "range": "20/60", "attackBonus": 4, "damage": "1d4+2", "damageType": "piercing", "quantity": 10 },
+        { "name": "Shortsword", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "piercing", "note": "In inventory but no attack line on the sheet; stats derived as a monk weapon." }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Unarmored Defense", "description": "AC = 10 + Dex + Wis while unarmored and without a shield." },
+          { "name": "Martial Arts", "action": "bonus", "description": "Dex for monk weapons and unarmed strikes; d4 martial arts die; after attacking with a monk weapon or unarmed strike, one unarmed strike as a bonus action." },
+          { "name": "Stone's Endurance", "action": "reaction", "description": "When you take damage, reduce it by 1d12 + 2.", "resource": { "max": 1, "recharge": "short" }, "roll": "1d12+2" },
+          { "name": "Natural Athlete", "description": "Proficient in Athletics (included)." },
+          { "name": "Powerful Build", "description": "Count as one size larger for carry, push, drag, lift." },
+          { "name": "Mountain Born", "description": "Resistance to cold damage; adapted to high altitude." },
+          { "name": "Researcher", "description": "When you don't know a piece of lore, you usually know where to find it." }
+        ],
+        "2": [
+          { "name": "Ki", "description": "2 ki points (3 at level 3). Regain on short or long rest.", "resource": { "maxByLevel": { "2": 2, "3": 3 }, "recharge": "short" } },
+          { "name": "Flurry of Blows", "action": "bonus", "description": "After the Attack action, spend 1 ki for two unarmed strikes.", "cost": 1 },
+          { "name": "Patient Defense", "action": "bonus", "description": "Spend 1 ki to Dodge.", "cost": 1 },
+          { "name": "Step of the Wind", "action": "bonus", "description": "Spend 1 ki to Dash or Disengage; jump distance doubled.", "cost": 1 },
+          { "name": "Unarmored Movement", "description": "Speed +10 ft. (30 to 40) while unarmored." }
+        ],
+        "3": [
+          { "name": "Deflect Missiles", "action": "reaction", "description": "Reduce ranged weapon damage by 1d10 + 5. If reduced to 0, catch it; spend 1 ki to throw it back.", "roll": "1d10+5" },
+          { "name": "Open Hand Technique", "description": "On a Flurry of Blows hit, choose: knock prone (Dex save DC 12), push 15 ft. (Str save DC 12), or no reactions until end of your next turn." }
+        ]
+      },
+      "spellcasting": null,
+      "equipment": ["10 darts", "Shortsword", "Quarterstaff", "Ink (1 oz bottle)", "Backpack", "Common clothes", "Small knife", "Crowbar", "Hammer", "10 pitons", "10 days of rations", "50 ft. hempen rope", "Tinderbox", "10 torches", "Waterskin"],
+      "coins": { "gp": 10 }
+    },
+    {
+      "id": "reinhardt",
+      "name": "Reinhardt",
+      "race": "Hill Dwarf",
+      "class": "Cleric",
+      "subclass": { "1": "Life Domain" },
+      "deity": "Marthammor Duin",
+      "background": "Soldier",
+      "alignment": "Lawful Good",
+      "size": "Medium",
+      "speed": 25,
+      "abilities": { "str": 14, "dex": 8, "con": 15, "int": 10, "wis": 16, "cha": 12 },
+      "saveProficiencies": ["wis", "cha"],
+      "skillProficiencies": ["athletics", "intimidation", "medicine", "religion"],
+      "expertise": [],
+      "ac": 18,
+      "acNote": "Chain mail + shield. Disadvantage on Stealth. Speed not reduced by heavy armor.",
+      "hp": { "level1Max": 11, "hitDie": "d8", "hpPerLevelBonus": 3, "hpNote": "+3 includes Dwarven Toughness" },
+      "initiative": -1,
+      "passivePerception": 13,
+      "senses": ["Darkvision 60 ft."],
+      "resistances": ["poison"],
+      "languages": ["Common", "Dwarvish", "Elvish", "Goblin"],
+      "otherProficiencies": ["All armor", "Shields", "Simple weapons", "Battleaxes", "Warhammers"],
+      "attacks": [
+        { "name": "Mace", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "bludgeoning" },
+        { "name": "Handaxe", "type": "melee/thrown", "range": "20/60", "attackBonus": 4, "damage": "1d6+2", "damageType": "slashing" }
+      ],
+      "featuresByLevel": {
+        "1": [
+          { "name": "Disciple of Life", "description": "Healing spells of 1st level or higher restore an extra 2 + spell level HP." },
+          { "name": "Ritual Casting", "description": "Cast prepared ritual-tagged spells as rituals." },
+          { "name": "Darkvision", "description": "See 60 ft. in dim light as bright, darkness as dim." },
+          { "name": "Dwarven Resilience", "description": "Resistance to poison; advantage on saves against being poisoned." },
+          { "name": "Stonecunning", "description": "Double proficiency (+4) on History checks about stonework." },
+          { "name": "Dwarven Toughness", "description": "+1 HP per level (included)." },
+          { "name": "Heavy Armor", "description": "Speed not reduced by heavy armor." }
+        ],
+        "2": [
+          { "name": "Channel Divinity", "action": "action", "description": "Turn Undead (Undead within 30 ft., DC 13 Wis save or turned 1 min) or Preserve Life (distribute 10 HP at level 2, 15 at level 3, among creatures within 30 ft., up to half their max).", "resource": { "max": 1, "recharge": "short" } }
+        ],
+        "3": [
+          { "name": "2nd-Level Spells", "description": "Can prepare and cast 2nd-level spells. Lesser Restoration and Spiritual Weapon always prepared." }
+        ]
+      },
+      "spellcasting": {
+        "ability": "wis",
+        "saveDC": 13,
+        "attackBonus": 5,
+        "preparation": "prepared",
+        "preparedCountByLevel": { "1": 4, "2": 5, "3": 6 },
+        "slotsByLevel": {
+          "1": { "1": 2 },
+          "2": { "1": 3 },
+          "3": { "1": 4, "2": 2 }
+        },
+        "cantrips": ["Light", "Sacred Flame", "Thaumaturgy"],
+        "alwaysPreparedByLevel": { "1": ["Bless", "Cure Wounds"], "3": ["Lesser Restoration", "Spiritual Weapon"] },
+        "availableSpells": {
+          "1": ["Bless", "Command", "Cure Wounds", "Detect Magic (ritual)", "Guiding Bolt", "Healing Word", "Protection from Evil and Good", "Sanctuary", "Shield of Faith"],
+          "2": ["Hold Person", "Lesser Restoration", "Spiritual Weapon"]
+        }
+      },
+      "equipment": ["Chain mail", "Shield", "Mace", "Handaxe", "Holy symbol", "Backpack", "Bedroll", "Mess kit", "Tinderbox", "10 torches", "10 days of rations", "Waterskin", "50 ft. hempen rope", "Insignia of rank", "Broken blade trophy", "Set of bone dice", "Common clothes", "Pouch"],
+      "coins": { "gp": 10 }
+    }
+  ]
+}
