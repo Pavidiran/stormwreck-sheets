@@ -3,9 +3,12 @@
 // Owlbear; outside of it (opened directly in a browser) a local mock is used so the sheet
 // can be tested standalone.
 
+// The SDK must be imported statically so its message listener exists before Owlbear
+// sends the ready handshake to this iframe. A lazy import can miss that message.
+import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
+
 const NS = "com.stormwreck.sheets";
-const VERSION = "0.1.0";
-const SDK_URL = "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
+const VERSION = "0.1.1";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -32,17 +35,13 @@ const DEFAULT_PREP = {
 // Backends: real Owlbear SDK, or a localStorage/BroadcastChannel mock.
 // ---------------------------------------------------------------------------
 async function makeBackend() {
-  const inFrame = window.self !== window.top;
-  if (inFrame) {
-    try {
-      const mod = await import(SDK_URL);
-      const OBR = mod.default;
-      if (OBR && OBR.isAvailable) return obrBackend(OBR);
-    } catch (e) {
-      console.warn("Owlbear SDK failed to load, falling back to mock:", e);
-    }
-  }
+  if (OBR && OBR.isAvailable) return obrBackend(OBR);
   return mockBackend();
+}
+
+function status(text) {
+  const el = document.querySelector("#app .loading");
+  if (el) el.textContent = text;
 }
 
 function obrBackend(OBR) {
@@ -818,10 +817,15 @@ async function onField(field, el) {
 // Boot
 // ---------------------------------------------------------------------------
 async function boot() {
+  B = await makeBackend();
+  status(B.kind === "obr" ? "Connecting to Owlbear…" : "Starting in local test mode…");
+  const slow = setTimeout(() => status(`Still waiting for Owlbear's ready signal (SDK ${OBR && OBR.isAvailable ? "available" : "not available"}). Try closing and reopening the panel.`), 8000);
+  await B.ready();
+  clearTimeout(slow);
+  status("Loading character data…");
   const [chars, spells] = await Promise.all([fetch("characters.json").then((r) => r.json()), fetch("spells.json").then((r) => r.json())]);
   DATA = chars; SPELLS = spells;
-  B = await makeBackend();
-  await B.ready();
+  status("Reading room state…");
   ME = await B.player();
   META = (await B.getMeta()) || {};
   const applyTheme = (m) => document.documentElement.setAttribute("data-theme", m === "LIGHT" ? "light" : "dark");
