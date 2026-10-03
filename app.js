@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -489,7 +489,7 @@ function renderBattle(c, isGM, claims) {
       <input type="text" id="bName" placeholder="Enemy name" style="flex:1;min-width:90px">
       <input type="number" id="bHpN" placeholder="HP" min="1" style="width:56px">
       <input type="number" id="bBonus" placeholder="init +" style="width:56px">
-      <input type="number" id="bCount" placeholder="×1" min="1" max="12" style="width:46px">
+      <input type="number" id="bCount" placeholder="×1" min="1" max="30" style="width:46px">
       <button class="sm" data-act="bAdd">Add & roll init</button>
     </div>` : `<div class="muted" style="font-size:11px">Round ${b.round || 1}${b.entries[b.turn] ? ` · ${esc(b.entries[b.turn].name)}'s turn` : ""}</div>`;
   const body = `${rows}${empty}${controls}`;
@@ -839,7 +839,7 @@ async function onAction(act, el, ev) {
       const name = (document.getElementById("bName").value || "").trim() || "Enemy";
       const hp = Math.max(1, parseInt(document.getElementById("bHpN").value || "1", 10) || 1);
       const bonus = parseInt(document.getElementById("bBonus").value || "0", 10) || 0;
-      const count = Math.max(1, Math.min(12, parseInt(document.getElementById("bCount").value || "1", 10) || 1));
+      const count = Math.max(1, Math.min(30, parseInt(document.getElementById("bCount").value || "1", 10) || 1));
       if (document.activeElement) document.activeElement.blur(); // let the list re-render right away
       await updateBattle((b) => {
         const existing = b.entries.filter((e) => e.kind === "npc" && (e.name === name || e.name.startsWith(name + " "))).length;

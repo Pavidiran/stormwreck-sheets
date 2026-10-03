@@ -184,3 +184,9 @@ section.card > .body { padding: 4px 10px 10px; }
 .brow .bname { flex: 1; min-width: 70px; }
 .brow .bhp { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
 .badd { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.brow input[type="number"], .badd input[type="number"] { appearance: textfield; -moz-appearance: textfield; padding: 3px 4px; }
+.brow input[type="number"]::-webkit-inner-spin-button, .brow input[type="number"]::-webkit-outer-spin-button,
+.badd input[type="number"]::-webkit-inner-spin-button, .badd input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.brow .bhp input[type="number"] { width: 40px !important; }
+.brow .binit input[type="number"] { width: 36px !important; }
+.brow input[data-field^="bdmg"] { width: 44px !important; }
