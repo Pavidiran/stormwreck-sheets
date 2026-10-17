@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.3.2";
+const VERSION = "0.4.0";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -227,6 +227,36 @@ function saveUi() {
 const charKey = (id) => `${NS}/char/${id}`;
 const CLAIMS_KEY = `${NS}/claims`;
 const BATTLE_KEY = `${NS}/battle`;
+const ROOM_KEY = `${NS}/room`;
+
+// ---------------------------------------------------------------------------
+// Per-room setup: this group's names for the pregens and which pregens are in play.
+// Stored in room metadata, so every Owlbear room (= every group) has its own.
+// A room with no setup behaves exactly like before: original names, everyone in.
+// ---------------------------------------------------------------------------
+const ROOM_DEFAULT = { names: {}, hidden: [] };
+function room() { return META[ROOM_KEY] || ROOM_DEFAULT; }
+async function updateRoom(fn) {
+  const r = JSON.parse(JSON.stringify(room()));
+  r.names = r.names || {}; r.hidden = r.hidden || [];
+  fn(r);
+  META[ROOM_KEY] = r;
+  render();
+  await B.setMeta({ [ROOM_KEY]: r });
+}
+// The characters as this room sees them (renamed + filtered). DATA.characters resolves to this.
+let ROSTER = { src: null, list: null };
+function activeChars() {
+  const r = room();
+  if (ROSTER.src === r && ROSTER.list) return ROSTER.list;
+  const names = r.names || {}, hidden = new Set(r.hidden || []);
+  let list = DATA.base.filter((c) => !hidden.has(c.id)).map((c) => (names[c.id] || "").trim() ? { ...c, name: names[c.id].trim() } : c);
+  if (!list.length) list = DATA.base; // never let the roster go empty
+  ROSTER = { src: r, list };
+  return list;
+}
+// Battle entries keep the name they joined with; show the room's current name for PCs instead.
+function entryName(e) { const ch = e.kind === "pc" ? byId(e.charId) : null; return ch ? ch.name : e.name; }
 
 // ---------------------------------------------------------------------------
 // Battle tracker (shared initiative order + hidden enemy HP)
@@ -395,6 +425,7 @@ function render() {
     if (mine && byId(mine.charId)) UI.charId = mine.charId;
     else if (isGM) UI.charId = DATA.characters[0].id;
   }
+  if (isGM && UI.charId && !byId(UI.charId)) UI.charId = DATA.characters[0].id; // viewed character was removed from this room
   if (!UI.charId || !byId(UI.charId)) { app.innerHTML = renderPicker(claims); return; }
   const c = byId(UI.charId), s = stateOf(c.id), d = derive(c, s);
   const scrollY = app.parentElement.scrollTop || window.scrollY;
@@ -442,11 +473,17 @@ function renderHeader(c, s, d, isGM, claims) {
       <button data-act="dice3d">${diceLabel}</button>
       <button data-act="popups">${UI.popups ? "✓ " : ""}Pop up other people's rolls</button>
       <button data-act="claims">Who plays whom</button>
+      ${isGM ? `<button data-act="roomSetup">Room setup: names & roster…</button>` : ""}
       ${isGM ? `<button data-act="resetChar">Reset ${esc(c.name.split(" ")[0])} to level 1…</button>` : ""}
     </div></div>`;
+  const r = room();
+  const roomBox = isGM && UI.roomOpen ? `<div class="notice"><b>Room setup</b> <span class="muted">· this room only</span>
+    <div class="muted" style="font-size:11px;margin:2px 0 6px">Give the pregens the names this group uses, and untick anyone who is not playing. Blank = original name. Press Enter or click away to save.</div>
+    ${DATA.base.map((x) => `<div class="rrow"><input type="checkbox" data-act="roomShow" data-id="${x.id}" title="In this room" ${(r.hidden || []).includes(x.id) ? "" : "checked"}><input type="text" data-field="rname:${x.id}" value="${esc((r.names || {})[x.id] || "")}" placeholder="${esc(x.name)}" maxlength="40"><small class="muted">${esc(x.class)}</small></div>`).join("")}
+    <button class="sm ghost" data-act="roomSetup">Close</button></div>` : "";
   const claimsBox = UI.acctClaimsOpen ? `<div class="notice">${DATA.characters.map((x) => { const o = Object.values(claims).find((y) => y.charId === x.id); return `${esc(x.name)}: ${o ? esc(o.name) : "<span class='muted'>unclaimed</span>"}`; }).join("<br>")}</div>` : "";
   const resetBox = UI.confirmReset ? `<div class="notice warn">Reset <b>${esc(c.name)}</b> to level 1, full HP, all resources and default spells? <button class="sm" data-act="resetChar2">Yes, reset</button> <button class="sm ghost" data-act="cancelReset">Cancel</button></div>` : "";
-  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${claimsBox}${resetBox}`;
+  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${roomBox}${claimsBox}${resetBox}`;
 }
 
 function renderBattle(c, isGM, claims) {
@@ -470,7 +507,7 @@ function renderBattle(c, isGM, claims) {
     return `<div class="${cls}" ${isGM ? `data-act="bSetTurn" data-i="${i}"` : ""}>
       <span class="marker">${cur ? "▶" : ""}</span>
       <span class="binit">${init}</span>
-      <span class="bname">${esc(e.name)}${e.kind === "npc" ? "" : ""}</span>
+      <span class="bname">${esc(entryName(e))}</span>
       ${hp}${dmgInput}
       ${isGM ? `<button class="icon ghost" data-act="bRemove" data-id="${e.id}" title="Remove">×</button>` : ""}
     </div>`;
@@ -491,7 +528,7 @@ function renderBattle(c, isGM, claims) {
       <input type="number" id="bBonus" placeholder="init +" style="width:56px">
       <input type="number" id="bCount" placeholder="×1" min="1" max="30" style="width:46px">
       <button class="sm" data-act="bAdd">Add & roll init</button>
-    </div>` : `<div class="muted" style="font-size:11px">Round ${b.round || 1}${b.entries[b.turn] ? ` · ${esc(b.entries[b.turn].name)}'s turn` : ""}</div>`;
+    </div>` : `<div class="muted" style="font-size:11px">Round ${b.round || 1}${b.entries[b.turn] ? ` · ${esc(entryName(b.entries[b.turn]))}'s turn` : ""}</div>`;
   const body = `${rows}${empty}${controls}`;
   const title = `Battle${b.entries.length ? ` · round ${b.round || 1}` : ""}`;
   return section("battle", title, body);
@@ -806,6 +843,15 @@ async function onAction(act, el, ev) {
     case "popups": UI.popups = !UI.popups; UI.menu = false; saveUi(); render(); break;
     case "dice3d": DICE.want = !DICE.want; UI.menu = false; try { localStorage.setItem("stormwreck-dice3d", JSON.stringify(DICE.want)); } catch {} if (DICE.want && !DICE.ready) B.emit("dice-plus/isReady", { requestId: uid(), timestamp: Date.now() }, "LOCAL").catch(() => {}); render(); break;
     case "claims": UI.acctClaimsOpen = !UI.acctClaimsOpen; UI.menu = false; render(); break;
+    case "roomSetup": UI.menu = false; UI.roomOpen = !UI.roomOpen; render(); break;
+    case "roomShow": {
+      const on = el.checked;
+      await updateRoom((r) => {
+        r.hidden = r.hidden.filter((x) => x !== ds.id);
+        if (!on && r.hidden.length < DATA.base.length - 1) r.hidden.push(ds.id); // keep at least one character in the room
+      });
+      break;
+    }
     case "switch": UI.menu = false; UI.charId = null; saveUi(); render(); break;
     case "tab": UI.charId = ds.id; UI.levelup = null; UI.rest = null; UI.prepOpen = false; saveUi(); render(); break;
     case "claim": {
@@ -1027,6 +1073,11 @@ async function onField(field, el) {
     });
     return;
   }
+  if (field.startsWith("rname:")) {
+    const id = field.slice(6), v = el.value.trim().slice(0, 40);
+    await updateRoom((r) => { if (v) r.names[id] = v; else delete r.names[id]; });
+    return;
+  }
   const c = byId(UI.charId); if (!c) return;
   if (field === "notes") await update(c.id, (st) => { st.notes = el.value.slice(0, 1500); });
   if (field === "thp") await update(c.id, (st) => { st.thp = Math.max(0, parseInt(el.value || "0", 10) || 0); });
@@ -1044,7 +1095,8 @@ async function boot() {
   clearTimeout(slow);
   status("Loading character data…");
   const [chars, spells] = await Promise.all([fetch("characters.json").then((r) => r.json()), fetch("spells.json").then((r) => r.json())]);
-  DATA = chars; SPELLS = spells;
+  DATA = { ...chars, base: chars.characters }; SPELLS = spells;
+  Object.defineProperty(DATA, "characters", { get: activeChars });
   status("Reading room state…");
   ME = await B.player();
   META = (await B.getMeta()) || {};
@@ -1055,7 +1107,7 @@ async function boot() {
     // "Your turn" popup when the battle pointer lands on my character.
     const b = battle(); const e = b.entries[b.turn];
     const key = e ? `${e.id}:${b.round}` : "";
-    if (key && key !== UI.lastTurnKey && e.kind === "pc" && e.charId === UI.charId && ME.role !== "GM" && B.kind === "obr") B.notify(`${e.name}: your turn!`, "INFO");
+    if (key && key !== UI.lastTurnKey && e.kind === "pc" && e.charId === UI.charId && ME.role !== "GM" && B.kind === "obr") B.notify(`${entryName(e)}: your turn!`, "INFO");
     UI.lastTurnKey = key;
     render();
   });
@@ -1088,7 +1140,7 @@ async function boot() {
     if (ev.key === "Enter" && ev.target.dataset.field === "ac") ev.target.blur();
     if (ev.key === "Enter" && ev.target.id === "hpamt") { ev.preventDefault(); app.querySelector('[data-act="damage"]').click(); }
     if (ev.key === "Enter" && ["bName", "bHpN", "bBonus", "bCount"].includes(ev.target.id)) { ev.preventDefault(); app.querySelector('[data-act="bAdd"]').click(); }
-    if (ev.key === "Enter" && (ev.target.dataset.field || "").startsWith("b")) { ev.preventDefault(); ev.target.blur(); }
+    if (ev.key === "Enter" && /^(b|rname:)/.test(ev.target.dataset.field || "")) { ev.preventDefault(); ev.target.blur(); }
   });
   app.addEventListener("focusout", () => { if (UI.dirty) setTimeout(() => { if (!isTyping()) render(); }, 50); });
   document.addEventListener("click", (ev) => { if (UI.menu && !ev.target.closest(".menu")) { UI.menu = false; render(); } });

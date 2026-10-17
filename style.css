@@ -190,3 +190,8 @@ section.card > .body { padding: 4px 10px 10px; }
 .brow .bhp input[type="number"] { width: 40px !important; }
 .brow .binit input[type="number"] { width: 36px !important; }
 .brow input[data-field^="bdmg"] { width: 44px !important; }
+
+/* Room setup (GM): per-room names and roster */
+.rrow { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+.rrow input[type="text"] { flex: 1; min-width: 0; }
+.rrow small { width: 52px; text-align: right; }

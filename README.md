@@ -20,6 +20,10 @@ characters. Plain static files, no build step.
   (for the wizard) two new spellbook picks.
 - All state lives in the Owlbear room, so everyone sees the same numbers. Players pick their
   character once; the DM sees all six as tabs.
+- Running the same pregens with a second group? Use a second Owlbear room. Every room has its
+  own HP, levels and battle, and the DM menu has **Room setup: names & roster** to give the
+  characters this group's names and hide any that are not being played. Nothing in the files
+  changes, so all rooms keep working.
 
 ## Files
 
