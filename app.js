@@ -1120,7 +1120,7 @@ async function boot() {
   await B.ready();
   clearTimeout(slow);
   status("Loading character data…");
-  const [chars, spells] = await Promise.all([fetch("characters.json").then((r) => r.json()), fetch("spells.json").then((r) => r.json())]);
+  const [chars, spells] = await Promise.all([fetch(`characters.json?v=${VERSION}`).then((r) => r.json()), fetch(`spells.json?v=${VERSION}`).then((r) => r.json())]);
   DATA = { ...chars, base: chars.characters }; SPELLS = spells;
   Object.defineProperty(DATA, "characters", { get: activeChars });
   status("Reading room state…");
