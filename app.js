@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -166,7 +166,7 @@ function fromDicePlus(res) {
 function dicePlusRoll(notation, label) {
   return new Promise((resolve, reject) => {
     const rollId = uid();
-    const timer = setTimeout(() => { DICE.pending.delete(rollId); reject(new Error("Dice+ did not answer")); }, 30000);
+    const timer = setTimeout(() => { DICE.pending.delete(rollId); reject(new Error("Dice+ did not answer")); }, 12000);
     DICE.pending.set(rollId, { resolve, reject, timer });
     B.emit("dice-plus/roll-request", {
       rollId, playerId: ME.id, playerName: ME.name, rollTarget: "everyone",
@@ -199,7 +199,7 @@ const useDicePlus = () => DICE.want && DICE.ready && B.kind === "obr";
 async function rollNotation(notation, label) {
   if (useDicePlus()) {
     try { return await dicePlusRoll(notation, label); }
-    catch (e) { console.warn(e); const r = rollInternal(notation); r.text += " (Dice+ failed, rolled here)"; return r; }
+    catch (e) { console.warn(e); toast("Dice+ did not answer, rolled in the panel instead"); const r = rollInternal(notation); r.text += " (Dice+ failed, rolled here)"; return r; }
   }
   return rollInternal(notation);
 }
@@ -302,7 +302,11 @@ function defaults(c) {
     used: {}, slotsUsed: {}, prep: (DEFAULT_PREP[c.id] || []).slice(), book: [], acOverride: null, notes: "",
   };
 }
-function stateOf(id) { return META[charKey(id)] || defaults(byId(id)); }
+const baseById = (id) => DATA.base.find((c) => c.id === id);
+function stateOf(id) {
+  const c = byId(id) || baseById(id); // a character hidden from this room may still sit in the battle list
+  return META[charKey(id)] || (c ? defaults(c) : { lvl: 1, hp: 0, thp: 0, hpGains: [], hdUsed: 0, ds: { s: 0, f: 0 }, used: {}, slotsUsed: {}, prep: [], book: [], acOverride: null, notes: "" });
+}
 async function update(id, fn) {
   const s = JSON.parse(JSON.stringify(stateOf(id)));
   fn(s);
@@ -375,16 +379,20 @@ function derive(c, s) {
 // ---------------------------------------------------------------------------
 // Rolling + log
 // ---------------------------------------------------------------------------
+// The roll log lives in room metadata: it survives closing the panel and is the same for everyone.
+const LOG_KEY = `${NS}/log`;
+const LOG_MAX = 25;
+function logEntries() { return META[LOG_KEY] || []; }
 function post(c, entry) {
-  const msg = { who: c.name, charId: c.id, player: ME.name, t: Date.now(), ...entry };
-  B.send(msg);
+  const msg = { id: uid(), who: c.name, charId: c.id, player: ME.name, playerId: ME.id, t: Date.now(), ...entry };
+  const log = [msg, ...logEntries()].slice(0, LOG_MAX);
+  META[LOG_KEY] = log; renderLog();
+  B.setMeta({ [LOG_KEY]: log }).catch(console.error);
+  B.send(msg); // live ping so other panels can pop up the roll
 }
 function addLog(msg) {
-  UI.log.unshift(msg); if (UI.log.length > 40) UI.log.length = 40;
-  if (UI.popups && msg.player !== ME.name && B.kind === "obr" && msg.via !== "dice+") {
-    B.notify(`${msg.who}: ${msg.label} ${msg.total != null ? "→ " + msg.total : ""}`);
-  }
-  renderLog();
+  if (!msg || msg.playerId === ME.id || msg.player === ME.name) return;
+  if (UI.popups && B.kind === "obr" && msg.via !== "dice+") B.notify(`${msg.who}: ${msg.label} ${msg.total != null ? "→ " + msg.total : ""}`);
 }
 
 // A d20 roll: takes the current adv/dis toggle, posts to the log, returns the result.
@@ -414,10 +422,24 @@ function isTyping() {
   return el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && (el.type === "text" || el.type === "number")));
 }
 
+// Re-render without losing what someone is typing: remember the focused field, put it back afterwards.
+function keepFocus() {
+  const el = document.activeElement;
+  if (!isTyping() || !app.contains(el)) return null;
+  const sel = el.id ? `#${el.id}` : el.dataset.field ? `[data-field="${el.dataset.field}"]` : null;
+  return sel ? { sel, value: el.value, s: el.selectionStart, e: el.selectionEnd } : null;
+}
+function restoreFocus(k) {
+  if (!k) return;
+  const el = app.querySelector(k.sel); if (!el) return;
+  if (el.value !== k.value) { el.value = k.value; el.__pending = true; } // typed but not saved yet: flushed on blur
+  try { el.setSelectionRange(k.s, k.e); } catch {}
+  el.focus({ preventScroll: true });
+}
+
 function render() {
   if (!DATA) return;
-  if (isTyping()) { UI.dirty = true; return; }
-  UI.dirty = false;
+  const keep = keepFocus();
   const isGM = ME.role === "GM";
   const claims = META[CLAIMS_KEY] || {};
   if (!UI.charId) {
@@ -446,6 +468,7 @@ function render() {
     `<div class="muted" style="font-size:10px;text-align:right">Stormwreck Sheets v${VERSION} · ${diceNote} · ${esc(ME.name)} (${ME.role})</div>`,
     `<div id="toast" class="toast"></div>`,
   ].join("");
+  restoreFocus(keep);
   window.scrollTo(0, scrollY);
 }
 
@@ -610,6 +633,7 @@ function renderAttacks(c, s, d) {
     return `<div class="row"><div class="nm">${esc(a.name)}<small>${esc(a.type)}${a.range ? " " + esc(a.range) + " ft" : ""} · ${esc(a.damageType)}${a.note ? " · " + esc(a.note) : ""}${a.quantity ? " · ×" + a.quantity : ""}</small></div>
       <div class="btns"><button data-act="hit" data-i="${i}">Hit ${sgn(a.attackBonus)}</button>
       <button data-act="dmg" data-i="${i}" ${critReady ? 'class="primary"' : ""}>${critReady ? "Crit dmg" : "Dmg"} ${esc(a.damage)}</button>
+      ${a.versatile ? `<button data-act="dmg" data-i="${i}" data-two="1" ${critReady ? 'class="primary"' : ""} title="Two-handed damage">${critReady ? "Crit 2H" : "2H"} ${esc(a.versatile)}</button>` : ""}
       ${d.sneakDie ? `<button class="sm" data-act="sneak" data-i="${i}" title="Sneak Attack">+${d.sneakDie}</button>` : ""}</div></div>`;
   }).join("");
   const note = d.critAt < 20 ? `<div class="muted" style="font-size:11px">Improved Critical: weapon attacks crit on 19–20.</div>` : "";
@@ -774,11 +798,12 @@ function renderLevelUp(c, s, d) {
 }
 
 function renderLogInner() {
-  if (!UI.log.length) return `<div class="muted">No rolls yet.</div>`;
-  return UI.log.map((e, i) => {
+  const L = logEntries();
+  if (!L.length) return `<div class="muted">No rolls yet.</div>`;
+  return L.map((e, i) => {
     const cls = e.crit || e.nat20 || e.good ? " crit" : e.fumble ? " fumble" : "";
     const time = new Date(e.t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    const lucky = e.lucky && e.charId === UI.charId && i === UI.log.findIndex((x) => x.lucky && x.charId === e.charId) && Date.now() - e.t < 120000
+    const lucky = e.lucky && e.charId === UI.charId && i === L.findIndex((x) => x.lucky && x.charId === e.charId) && Date.now() - e.t < 120000
       ? ` <button class="sm lucky" data-act="luckyReroll" data-i="${i}">Lucky: reroll the 1</button>` : "";
     return `<div class="e${cls}"><span class="who">${esc(e.who)}</span> ${esc(e.label)}${e.total != null ? `<span class="tot">${e.total}</span>` : ""}${e.crit ? " <b>CRIT</b>" : e.nat20 ? " <b>nat 20</b>" : ""}${e.fumble ? " <b>nat 1</b>" : ""}${lucky}<br><span class="det">${esc(e.text || "")} <span style="float:right">${e.via === "dice+" ? "🎲 " : ""}${time}</span></span></div>`;
   }).join("");
@@ -917,8 +942,9 @@ async function onAction(act, el, ev) {
     case "dmg": {
       const a = c.attacks[+ds.i]; const la = UI.lastAttack[c.id];
       const crit = la && la.i === +ds.i && la.crit && fresh(la);
-      const r = await rollF(c, a.damage, `${a.name} damage`, { double: crit });
-      post(c, { label: `${a.name} damage${crit ? " (critical)" : ""}`, total: r.total, text: `${r.text} ${a.damageType}`, kind: "damage", via: r.via });
+      const two = !!ds.two && a.versatile;
+      const r = await rollF(c, two ? a.versatile : a.damage, `${a.name} damage${two ? " (2H)" : ""}`, { double: crit });
+      post(c, { label: `${a.name} damage${two ? " (two-handed)" : ""}${crit ? " (critical)" : ""}`, total: r.total, text: `${r.text} ${a.damageType}`, kind: "damage", via: r.via });
       if (crit) { UI.lastAttack[c.id] = null; render(); }
       break;
     }
@@ -1051,8 +1077,8 @@ async function onAction(act, el, ev) {
     }
 
     case "luckyReroll": {
-      const e = UI.log[+ds.i]; if (!e) break;
-      UI.log.forEach((x) => { if (x.lucky && x.charId === c.id) x.lucky = false; });
+      const e = logEntries()[+ds.i]; if (!e) break;
+      { const log = logEntries().map((x) => (x.lucky && x.charId === c.id ? { ...x, lucky: false } : x)); META[LOG_KEY] = log; B.setMeta({ [LOG_KEY]: log }).catch(console.error); }
       const r = await rollNotation(d20Notation(e.bonus || 0, 0), `${c.name.split(" ")[0]}: Lucky reroll`);
       const critAt = e.kind === "attack" ? d.critAt : 20;
       post(c, { label: `${e.label} (Lucky reroll)`, total: r.total, text: r.text, kind: e.kind, crit: e.kind === "attack" && r.d20 >= critAt, nat20: r.d20 === 20, fumble: r.d20 === 1, bonus: e.bonus, via: r.via });
@@ -1109,7 +1135,7 @@ async function boot() {
     const key = e ? `${e.id}:${b.round}` : "";
     if (key && key !== UI.lastTurnKey && e.kind === "pc" && e.charId === UI.charId && ME.role !== "GM" && B.kind === "obr") B.notify(`${entryName(e)}: your turn!`, "INFO");
     UI.lastTurnKey = key;
-    render();
+    try { render(); } catch (e) { console.error(e); toast("Display error: " + e.message); }
   });
   B.onMsg(addLog);
   B.onPlayer((p) => { ME = p; render(); });
@@ -1133,7 +1159,7 @@ async function boot() {
   app.addEventListener("change", (ev) => {
     const el = ev.target;
     if (el.dataset.act && el.type === "checkbox") { onAction(el.dataset.act, el, ev).catch(console.error); return; }
-    if (el.dataset.field) onField(el.dataset.field, el).catch(console.error);
+    if (el.dataset.field) { el.__pending = false; onField(el.dataset.field, el).catch(console.error); }
   });
   app.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && ev.target.dataset.enter) { ev.preventDefault(); const b = app.querySelector(`[data-act="${ev.target.dataset.enter}"]`); if (b) b.click(); }
@@ -1142,7 +1168,8 @@ async function boot() {
     if (ev.key === "Enter" && ["bName", "bHpN", "bBonus", "bCount"].includes(ev.target.id)) { ev.preventDefault(); app.querySelector('[data-act="bAdd"]').click(); }
     if (ev.key === "Enter" && /^(b|rname:)/.test(ev.target.dataset.field || "")) { ev.preventDefault(); ev.target.blur(); }
   });
-  app.addEventListener("focusout", () => { if (UI.dirty) setTimeout(() => { if (!isTyping()) render(); }, 50); });
+  // A field restored mid-typing by render() fires no "change" on blur, so save it here.
+  app.addEventListener("focusout", (ev) => { const t = ev.target; if (t && t.__pending && t.dataset && t.dataset.field) { t.__pending = false; onField(t.dataset.field, t).catch(console.error); } });
   document.addEventListener("click", (ev) => { if (UI.menu && !ev.target.closest(".menu")) { UI.menu = false; render(); } });
 }
 

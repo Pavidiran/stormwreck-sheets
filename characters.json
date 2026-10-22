@@ -144,7 +144,7 @@
       "languages": ["Common", "Draconic", "Dwarvish", "Giant"],
       "otherProficiencies": ["All armor", "Shields", "Simple weapons", "Martial weapons"],
       "attacks": [
-        { "name": "Battleaxe", "type": "melee", "attackBonus": 5, "damage": "1d8+3", "damageType": "slashing", "note": "1d10+3 two-handed (no shield)" },
+        { "name": "Battleaxe", "type": "melee", "attackBonus": 5, "damage": "1d8+3", "versatile": "1d10+3", "damageType": "slashing", "note": "2H needs both hands: no shield (AC −2)" },
         { "name": "Javelin", "type": "melee/thrown", "range": "30/120", "attackBonus": 5, "damage": "1d6+3", "damageType": "piercing", "quantity": 5 }
       ],
       "featuresByLevel": {
@@ -260,7 +260,7 @@
       "languages": ["Common", "Draconic", "Elvish", "Giant"],
       "otherProficiencies": ["Simple weapons", "Martial weapons (as listed on sheet)", "Smith's tools"],
       "attacks": [
-        { "name": "Quarterstaff", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "bludgeoning", "note": "1d8+2 two-handed" },
+        { "name": "Quarterstaff", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "versatile": "1d8+2", "damageType": "bludgeoning" },
         { "name": "Unarmed Strike", "type": "melee", "attackBonus": 4, "damage": "1d4+2", "damageType": "bludgeoning" },
         { "name": "Dart", "type": "ranged", "range": "20/60", "attackBonus": 4, "damage": "1d4+2", "damageType": "piercing", "quantity": 10 },
         { "name": "Shortsword", "type": "melee", "attackBonus": 4, "damage": "1d6+2", "damageType": "piercing", "note": "In inventory but no attack line on the sheet; stats derived as a monk weapon." }

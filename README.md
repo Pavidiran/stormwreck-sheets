@@ -12,8 +12,10 @@ characters. Plain static files, no build step.
   Stone's Endurance, Ki, Arcane Recovery) show pips and reset on the right kind of rest.
 - Spell slots, prepared spells, cantrips, Divine Smite, Disciple of Life bonus healing,
   ritual casting, Arcane Recovery. Spell descriptions included.
+- Versatile weapons (battleaxe, quarterstaff) have a separate two-handed damage button.
 - Short rest (spend hit dice) and long rest buttons.
 - Death saves.
+- Shared roll log (last 25 rolls, stored in the room, survives closing the panel).
 - Battle tracker at the top of every sheet: players join by clicking Initiative, the DM adds
   enemies (name, HP, init bonus, count) with hidden HP, steps through turns and rounds.
 - DM-only **Level up** button that applies the next level's HP, features, slots and
