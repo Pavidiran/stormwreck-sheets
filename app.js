@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.4.1";
+const VERSION = "0.4.2";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 
@@ -236,7 +236,13 @@ const ROOM_KEY = `${NS}/room`;
 // ---------------------------------------------------------------------------
 const ROOM_DEFAULT = { names: {}, hidden: [] };
 function room() { return META[ROOM_KEY] || ROOM_DEFAULT; }
+// Before any write-back, re-read the room so a panel with a stale copy can never
+// overwrite what others changed (this is how a frozen player once wiped the battle).
+async function refreshMeta() {
+  try { const m = await B.getMeta(); if (m) META = m; } catch (e) { console.warn("refreshMeta", e); }
+}
 async function updateRoom(fn) {
+  await refreshMeta();
   const r = JSON.parse(JSON.stringify(room()));
   r.names = r.names || {}; r.hidden = r.hidden || [];
   fn(r);
@@ -263,6 +269,7 @@ function entryName(e) { const ch = e.kind === "pc" ? byId(e.charId) : null; retu
 // ---------------------------------------------------------------------------
 function battle() { return META[BATTLE_KEY] || { round: 1, turn: 0, entries: [] }; }
 async function updateBattle(fn) {
+  await refreshMeta();
   const b = JSON.parse(JSON.stringify(battle()));
   fn(b);
   if (b.entries.length) b.turn = Math.max(0, Math.min(b.entries.length - 1, b.turn || 0)); else b.turn = 0;
@@ -308,6 +315,7 @@ function stateOf(id) {
   return META[charKey(id)] || (c ? defaults(c) : { lvl: 1, hp: 0, thp: 0, hpGains: [], hdUsed: 0, ds: { s: 0, f: 0 }, used: {}, slotsUsed: {}, prep: [], book: [], acOverride: null, notes: "" });
 }
 async function update(id, fn) {
+  await refreshMeta();
   const s = JSON.parse(JSON.stringify(stateOf(id)));
   fn(s);
   META[charKey(id)] = s;
@@ -385,9 +393,12 @@ const LOG_MAX = 25;
 function logEntries() { return META[LOG_KEY] || []; }
 function post(c, entry) {
   const msg = { id: uid(), who: c.name, charId: c.id, player: ME.name, playerId: ME.id, t: Date.now(), ...entry };
-  const log = [msg, ...logEntries()].slice(0, LOG_MAX);
-  META[LOG_KEY] = log; renderLog();
-  B.setMeta({ [LOG_KEY]: log }).catch(console.error);
+  META[LOG_KEY] = [msg, ...logEntries()].slice(0, LOG_MAX); renderLog();
+  refreshMeta().then(() => {
+    const log = [msg, ...logEntries().filter((x) => x.id !== msg.id)].slice(0, LOG_MAX);
+    META[LOG_KEY] = log;
+    return B.setMeta({ [LOG_KEY]: log });
+  }).catch(console.error);
   B.send(msg); // live ping so other panels can pop up the roll
 }
 function addLog(msg) {
