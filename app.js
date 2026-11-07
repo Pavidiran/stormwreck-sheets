@@ -8,9 +8,10 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
+const NOTES_MAX = 400; // room metadata is tiny (16 kB for every extension together), keep notes short
 
 const ABIL = ["str", "dex", "con", "int", "wis", "cha"];
 const ABIL_NAME = { str: "Strength", dex: "Dexterity", con: "Constitution", int: "Intelligence", wis: "Wisdom", cha: "Charisma" };
@@ -90,6 +91,7 @@ function mockBackend() {
     async setMeta(patch) {
       const m = read();
       for (const k of Object.keys(patch)) { if (patch[k] === undefined) delete m[k]; else m[k] = patch[k]; }
+      if (JSON.stringify(m).length > 16 * 1024) throw new Error("Room metadata size limit exceeded (16 kB), simulated like Owlbear"); // same cap as the real room
       try { localStorage.setItem(LS, JSON.stringify(m)); } catch {}
       metaCbs.forEach((cb) => cb(m));
       if (bc) bc.postMessage({ t: "meta" });
@@ -241,6 +243,29 @@ function room() { return META[ROOM_KEY] || ROOM_DEFAULT; }
 async function refreshMeta() {
   try { const m = await B.getMeta(); if (m) META = m; } catch (e) { console.warn("refreshMeta", e); }
 }
+// Owlbear caps room metadata at 16 kB for all extensions together. Sizes in kB of what we store
+// and of everything in the room, so the DM can see how close the room is.
+function usage() {
+  const ours = JSON.stringify(Object.fromEntries(Object.entries(META).filter(([k]) => k.startsWith(NS)))).length;
+  const all = JSON.stringify(META).length;
+  return { ours: (ours / 1024).toFixed(1), all: (all / 1024).toFixed(1) };
+}
+// Every room write goes through here so a rejected write is shown instead of silently lost
+// (that is what made rolls and HP changes vanish for everyone else in v0.4.1/0.4.2).
+async function writeMeta(patch, what = "the change") {
+  try {
+    await B.setMeta(patch);
+    if (UI.saveError) { UI.saveError = null; render(); }
+    return true;
+  } catch (e) {
+    console.error("setMetadata failed", e);
+    const u = usage();
+    UI.saveError = `Owlbear refused to save ${what}: ${e && e.message ? e.message : e}. The room holds ${u.all} kB of extension data (sheets: ${u.ours} kB), the limit is 16 kB. Clear the roll log from the ⋯ menu or remove other extensions' data.`;
+    toast(`Could not save ${what} to the room`);
+    render();
+    return false;
+  }
+}
 async function updateRoom(fn) {
   await refreshMeta();
   const r = JSON.parse(JSON.stringify(room()));
@@ -248,7 +273,7 @@ async function updateRoom(fn) {
   fn(r);
   META[ROOM_KEY] = r;
   render();
-  await B.setMeta({ [ROOM_KEY]: r });
+  await writeMeta({ [ROOM_KEY]: r }, "the room setup");
 }
 // The characters as this room sees them (renamed + filtered). DATA.characters resolves to this.
 let ROSTER = { src: null, list: null };
@@ -275,7 +300,7 @@ async function updateBattle(fn) {
   if (b.entries.length) b.turn = Math.max(0, Math.min(b.entries.length - 1, b.turn || 0)); else b.turn = 0;
   META[BATTLE_KEY] = b;
   render();
-  await B.setMeta({ [BATTLE_KEY]: b });
+  await writeMeta({ [BATTLE_KEY]: b }, "the battle");
 }
 function sortEntries(b) {
   const cur = b.entries[b.turn];
@@ -320,7 +345,7 @@ async function update(id, fn) {
   fn(s);
   META[charKey(id)] = s;
   render();
-  await B.setMeta({ [charKey(id)]: s });
+  await writeMeta({ [charKey(id)]: s }, "the sheet");
 }
 
 // ---------------------------------------------------------------------------
@@ -387,22 +412,44 @@ function derive(c, s) {
 // ---------------------------------------------------------------------------
 // Rolling + log
 // ---------------------------------------------------------------------------
-// The roll log lives in room metadata: it survives closing the panel and is the same for everyone.
+// The roll log. Every roll is sent live to the other open panels, which add it to their log at
+// once (so it shows up even if the room write fails or someone runs an older version), and the
+// last few rolls are also stored in room metadata so a freshly opened panel sees what happened.
+// Owlbear caps room metadata at 16 kB for ALL extensions together (v0.4.1 stored 25 full entries,
+// ~8 kB, which pushed busy rooms over the cap and made every write fail), so the stored copy is
+// LOG_MAX compact entries.
 const LOG_KEY = `${NS}/log`;
-const LOG_MAX = 25;
-function logEntries() { return META[LOG_KEY] || []; }
+const LOG_MAX = 8;
+const LIVE = []; // rolls heard over the live channel while this panel is open
+function compactEntry(e) {
+  const c = { id: e.id, who: e.who, charId: e.charId, t: e.t, label: e.label };
+  if (e.total != null) c.total = e.total;
+  if (e.text) c.text = String(e.text).slice(0, 60);
+  if (e.kind) c.kind = e.kind;
+  if (e.bonus) c.bonus = e.bonus;
+  for (const f of ["crit", "nat20", "fumble", "lucky", "good"]) if (e[f]) c[f] = true;
+  if (e.via === "dice+") c.via = "dice+";
+  return c;
+}
+function storedLog() { return Array.isArray(META[LOG_KEY]) ? META[LOG_KEY] : []; }
+function logEntries() {
+  const stored = storedLog(); const seen = new Set(stored.map((x) => x.id));
+  return [...stored, ...LIVE.filter((x) => !seen.has(x.id))].sort((a, b) => (b.t || 0) - (a.t || 0)).slice(0, LOG_MAX);
+}
+function remember(e) { if (!LIVE.some((x) => x.id === e.id)) { LIVE.unshift(e); if (LIVE.length > LOG_MAX) LIVE.length = LOG_MAX; } }
 function post(c, entry) {
   const msg = { id: uid(), who: c.name, charId: c.id, player: ME.name, playerId: ME.id, t: Date.now(), ...entry };
-  META[LOG_KEY] = [msg, ...logEntries()].slice(0, LOG_MAX); renderLog();
+  remember(compactEntry(msg)); renderLog();
+  B.send(msg); // live: other open panels add it to their log straight away
   refreshMeta().then(() => {
-    const log = [msg, ...logEntries().filter((x) => x.id !== msg.id)].slice(0, LOG_MAX);
+    const log = [compactEntry(msg), ...storedLog().filter((x) => x.id !== msg.id)].slice(0, LOG_MAX);
     META[LOG_KEY] = log;
-    return B.setMeta({ [LOG_KEY]: log });
+    return writeMeta({ [LOG_KEY]: log }, "the roll");
   }).catch(console.error);
-  B.send(msg); // live ping so other panels can pop up the roll
 }
 function addLog(msg) {
   if (!msg || msg.playerId === ME.id || msg.player === ME.name) return;
+  remember(compactEntry(msg)); renderLog();
   if (UI.popups && B.kind === "obr" && msg.via !== "dice+") B.notify(`${msg.who}: ${msg.label} ${msg.total != null ? "→ " + msg.total : ""}`);
 }
 
@@ -475,7 +522,7 @@ function render() {
     d.spell ? section("spells", "Spells", renderSpells(c, s, d)) : "",
     section("rest", "Rest & level", renderRest(c, s, d, isGM)),
     section("log", "Roll log", `<div id="log" class="log">${renderLogInner()}</div>`),
-    section("notes", "Notes", `<textarea data-field="notes" placeholder="Anything worth remembering…">${esc(s.notes)}</textarea>`),
+    section("notes", "Notes", `<textarea data-field="notes" maxlength="${NOTES_MAX}" placeholder="Anything worth remembering… (${NOTES_MAX} characters, the room has little storage)">${esc(s.notes)}</textarea>`),
     `<div class="muted" style="font-size:10px;text-align:right">Stormwreck Sheets v${VERSION} · ${diceNote} · ${esc(ME.name)} (${ME.role})</div>`,
     `<div id="toast" class="toast"></div>`,
   ].join("");
@@ -509,7 +556,10 @@ function renderHeader(c, s, d, isGM, claims) {
       <button data-act="claims">Who plays whom</button>
       ${isGM ? `<button data-act="roomSetup">Room setup: names & roster…</button>` : ""}
       ${isGM ? `<button data-act="resetChar">Reset ${esc(c.name.split(" ")[0])} to level 1…</button>` : ""}
+      ${isGM ? `<button data-act="clearLog">Clear roll log</button>` : ""}
+      ${isGM ? `<div class="muted" style="padding:6px 10px;font-size:11px" title="Owlbear allows 16 kB of extension data per room, shared by all extensions">Room data: sheets ${usage().ours} kB · all extensions ${usage().all} kB of 16</div>` : ""}
     </div></div>`;
+  const errBox = UI.saveError ? `<div class="notice warn">${esc(UI.saveError)} <button class="sm ghost" data-act="dismissErr">OK</button></div>` : "";
   const r = room();
   const roomBox = isGM && UI.roomOpen ? `<div class="notice"><b>Room setup</b> <span class="muted">· this room only</span>
     <div class="muted" style="font-size:11px;margin:2px 0 6px">Give the pregens the names this group uses, and untick anyone who is not playing. Blank = original name. Press Enter or click away to save.</div>
@@ -517,7 +567,7 @@ function renderHeader(c, s, d, isGM, claims) {
     <button class="sm ghost" data-act="roomSetup">Close</button></div>` : "";
   const claimsBox = UI.acctClaimsOpen ? `<div class="notice">${DATA.characters.map((x) => { const o = Object.values(claims).find((y) => y.charId === x.id); return `${esc(x.name)}: ${o ? esc(o.name) : "<span class='muted'>unclaimed</span>"}`; }).join("<br>")}</div>` : "";
   const resetBox = UI.confirmReset ? `<div class="notice warn">Reset <b>${esc(c.name)}</b> to level 1, full HP, all resources and default spells? <button class="sm" data-act="resetChar2">Yes, reset</button> <button class="sm ghost" data-act="cancelReset">Cancel</button></div>` : "";
-  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${roomBox}${claimsBox}${resetBox}`;
+  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${errBox}${roomBox}${claimsBox}${resetBox}`;
 }
 
 function renderBattle(c, isGM, claims) {
@@ -879,6 +929,8 @@ async function onAction(act, el, ev) {
     case "popups": UI.popups = !UI.popups; UI.menu = false; saveUi(); render(); break;
     case "dice3d": DICE.want = !DICE.want; UI.menu = false; try { localStorage.setItem("stormwreck-dice3d", JSON.stringify(DICE.want)); } catch {} if (DICE.want && !DICE.ready) B.emit("dice-plus/isReady", { requestId: uid(), timestamp: Date.now() }, "LOCAL").catch(() => {}); render(); break;
     case "claims": UI.acctClaimsOpen = !UI.acctClaimsOpen; UI.menu = false; render(); break;
+    case "clearLog": UI.menu = false; LIVE.length = 0; META[LOG_KEY] = []; render(); await writeMeta({ [LOG_KEY]: [] }, "the roll log"); break;
+    case "dismissErr": UI.saveError = null; render(); break;
     case "roomSetup": UI.menu = false; UI.roomOpen = !UI.roomOpen; render(); break;
     case "roomShow": {
       const on = el.checked;
@@ -895,7 +947,7 @@ async function onAction(act, el, ev) {
       const claims = { ...(META[CLAIMS_KEY] || {}) };
       claims[ME.id] = { charId: ds.id, name: ME.name, id: ME.id };
       META[CLAIMS_KEY] = claims; render();
-      await B.setMeta({ [CLAIMS_KEY]: claims });
+      await writeMeta({ [CLAIMS_KEY]: claims }, "your character choice");
       break;
     }
     case "resetChar": UI.menu = false; UI.confirmReset = true; render(); break;
@@ -1089,7 +1141,7 @@ async function onAction(act, el, ev) {
 
     case "luckyReroll": {
       const e = logEntries()[+ds.i]; if (!e) break;
-      { const log = logEntries().map((x) => (x.lucky && x.charId === c.id ? { ...x, lucky: false } : x)); META[LOG_KEY] = log; B.setMeta({ [LOG_KEY]: log }).catch(console.error); }
+      { const clear = (x) => (x.lucky && x.charId === c.id ? { ...x, lucky: false } : x); const log = storedLog().map(clear); META[LOG_KEY] = log; LIVE.splice(0, LIVE.length, ...LIVE.map(clear)); writeMeta({ [LOG_KEY]: log }, "the Lucky reroll").catch(console.error); }
       const r = await rollNotation(d20Notation(e.bonus || 0, 0), `${c.name.split(" ")[0]}: Lucky reroll`);
       const critAt = e.kind === "attack" ? d.critAt : 20;
       post(c, { label: `${e.label} (Lucky reroll)`, total: r.total, text: r.text, kind: e.kind, crit: e.kind === "attack" && r.d20 >= critAt, nat20: r.d20 === 20, fumble: r.d20 === 1, bonus: e.bonus, via: r.via });
@@ -1116,7 +1168,7 @@ async function onField(field, el) {
     return;
   }
   const c = byId(UI.charId); if (!c) return;
-  if (field === "notes") await update(c.id, (st) => { st.notes = el.value.slice(0, 1500); });
+  if (field === "notes") await update(c.id, (st) => { st.notes = el.value.slice(0, NOTES_MAX); });
   if (field === "thp") await update(c.id, (st) => { st.thp = Math.max(0, parseInt(el.value || "0", 10) || 0); });
   if (field === "ac") { const v = parseInt(el.value, 10); UI.editAc = false; await update(c.id, (st) => { st.acOverride = isNaN(v) || v === c.ac ? null : v; }); }
 }
@@ -1137,6 +1189,15 @@ async function boot() {
   status("Reading room state…");
   ME = await B.player();
   META = (await B.getMeta()) || {};
+  // Repair rooms written by v0.4.1/0.4.2: their 25-entry roll log and long notes could push the
+  // room over Owlbear's 16 kB cap, after which every write failed. Shrinking them frees the room.
+  if (ME.role === "GM") {
+    const patch = {};
+    const stored = storedLog();
+    if (stored.length > LOG_MAX || stored.some((x) => x.player != null || x.playerId != null)) patch[LOG_KEY] = stored.slice(0, LOG_MAX).map(compactEntry);
+    for (const c of DATA.base) { const s = META[charKey(c.id)]; if (s && typeof s.notes === "string" && s.notes.length > NOTES_MAX) patch[charKey(c.id)] = { ...s, notes: s.notes.slice(0, NOTES_MAX) }; }
+    if (Object.keys(patch).length) { Object.assign(META, patch); writeMeta(patch, "the storage cleanup").catch(console.error); }
+  }
   const applyTheme = (m) => document.documentElement.setAttribute("data-theme", m === "LIGHT" ? "light" : "dark");
   applyTheme(await B.theme()); B.onTheme(applyTheme);
   B.onMeta((m) => {

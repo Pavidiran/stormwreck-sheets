@@ -15,7 +15,7 @@ characters. Plain static files, no build step.
 - Versatile weapons (battleaxe, quarterstaff) have a separate two-handed damage button.
 - Short rest (spend hit dice) and long rest buttons.
 - Death saves.
-- Shared roll log (last 25 rolls, stored in the room, survives closing the panel).
+- Shared roll log: rolls reach every open panel live, and the last 8 are stored in the room so a freshly opened panel sees them. (Owlbear allows only 16 kB of extension data per room, so the stored log and notes are kept small; the DM menu shows the usage.)
 - Battle tracker at the top of every sheet: players join by clicking Initiative, the DM adds
   enemies (name, HP, init bonus, count) with hidden HP, steps through turns and rounds.
 - DM-only **Level up** button that applies the next level's HP, features, slots and
