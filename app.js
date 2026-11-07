@@ -8,7 +8,7 @@ import OBR from "https://cdn.jsdelivr.net/npm/@owlbear-rodeo/sdk@3.1.0/+esm";
 
 const NS = "com.stormwreck.sheets";
 const SOURCE = "stormwreck-sheets"; // identifier used by Dice+ to route results back to us
-const VERSION = "0.4.3";
+const VERSION = "0.4.4";
 const PROF = 2; // proficiency bonus is +2 for levels 1-4
 const MAX_LEVEL = 3;
 const NOTES_MAX = 400; // room metadata is tiny (16 kB for every extension together), keep notes short
@@ -557,9 +557,12 @@ function renderHeader(c, s, d, isGM, claims) {
       ${isGM ? `<button data-act="roomSetup">Room setup: names & roster…</button>` : ""}
       ${isGM ? `<button data-act="resetChar">Reset ${esc(c.name.split(" ")[0])} to level 1…</button>` : ""}
       ${isGM ? `<button data-act="clearLog">Clear roll log</button>` : ""}
-      ${isGM ? `<div class="muted" style="padding:6px 10px;font-size:11px" title="Owlbear allows 16 kB of extension data per room, shared by all extensions">Room data: sheets ${usage().ours} kB · all extensions ${usage().all} kB of 16</div>` : ""}
+      ${isGM ? `<button data-act="usage" title="Owlbear allows 16 kB of extension data per room, shared by all extensions">Room data: sheets ${usage().ours} kB · all ${usage().all} kB of 16…</button>` : ""}
     </div></div>`;
   const errBox = UI.saveError ? `<div class="notice warn">${esc(UI.saveError)} <button class="sm ghost" data-act="dismissErr">OK</button></div>` : "";
+  const usageBox = isGM && UI.usageOpen ? `<div class="notice"><b>Room data by key</b> <span class="muted">· Owlbear allows 16 kB in total, for every extension together</span><br>
+    ${Object.entries(META).map(([k, v]) => [k, JSON.stringify(v).length]).sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, n]) => `<span style="font-size:11px">${esc(k)}: <b>${(n / 1024).toFixed(2)} kB</b></span>`).join("<br>")}
+    <br><button class="sm ghost" data-act="usage">Close</button></div>` : "";
   const r = room();
   const roomBox = isGM && UI.roomOpen ? `<div class="notice"><b>Room setup</b> <span class="muted">· this room only</span>
     <div class="muted" style="font-size:11px;margin:2px 0 6px">Give the pregens the names this group uses, and untick anyone who is not playing. Blank = original name. Press Enter or click away to save.</div>
@@ -567,7 +570,7 @@ function renderHeader(c, s, d, isGM, claims) {
     <button class="sm ghost" data-act="roomSetup">Close</button></div>` : "";
   const claimsBox = UI.acctClaimsOpen ? `<div class="notice">${DATA.characters.map((x) => { const o = Object.values(claims).find((y) => y.charId === x.id); return `${esc(x.name)}: ${o ? esc(o.name) : "<span class='muted'>unclaimed</span>"}`; }).join("<br>")}</div>` : "";
   const resetBox = UI.confirmReset ? `<div class="notice warn">Reset <b>${esc(c.name)}</b> to level 1, full HP, all resources and default spells? <button class="sm" data-act="resetChar2">Yes, reset</button> <button class="sm ghost" data-act="cancelReset">Cancel</button></div>` : "";
-  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${errBox}${roomBox}${claimsBox}${resetBox}`;
+  return `${tabs}<div class="hdr"><div style="flex:1"><h1>${esc(c.name)}</h1><div class="sub">${sub}</div></div>${menu}</div>${errBox}${usageBox}${roomBox}${claimsBox}${resetBox}`;
 }
 
 function renderBattle(c, isGM, claims) {
@@ -931,6 +934,7 @@ async function onAction(act, el, ev) {
     case "claims": UI.acctClaimsOpen = !UI.acctClaimsOpen; UI.menu = false; render(); break;
     case "clearLog": UI.menu = false; LIVE.length = 0; META[LOG_KEY] = []; render(); await writeMeta({ [LOG_KEY]: [] }, "the roll log"); break;
     case "dismissErr": UI.saveError = null; render(); break;
+    case "usage": UI.menu = false; UI.usageOpen = !UI.usageOpen; render(); break;
     case "roomSetup": UI.menu = false; UI.roomOpen = !UI.roomOpen; render(); break;
     case "roomShow": {
       const on = el.checked;
